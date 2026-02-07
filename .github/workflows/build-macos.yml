@@ -15,33 +15,43 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
       
-      - name: Install Dependencies
+      - name: Verify Submodules
         run: |
-          brew install cmake ninja
+          echo "=== Submodule Status ==="
+          git submodule status --recursive
+          echo ""
+          echo "=== JUCE vorhanden ==="
+          ls JUCE/CMakeLists.txt
+          echo "=== clap-juce-extensions ==="
+          ls clap-juce-extensions/CMakeLists.txt || echo "CLAP nicht vorhanden (optional)"
       
       - name: Configure CMake (Universal Binary)
         run: |
           cmake -B build \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
+            -G Xcode \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
             -DAURA_ENABLE_LTO=ON
       
       - name: Build
         run: |
-          cmake --build build --config Release --target Aura_All
+          cmake --build build --config Release --target Aura_All -- -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
       
       - name: Verify Build
         run: |
+          echo "=== Build Artefakte ==="
+          find build/Aura_artefacts -name "*.vst3" -o -name "*.app" -o -name "*.clap" | head -20
+          echo ""
           echo "=== VST3 Bundle ==="
-          ls -la build/Aura_artefacts/Release/VST3/Aura.vst3/Contents/MacOS/
-          file build/Aura_artefacts/Release/VST3/Aura.vst3/Contents/MacOS/Aura
+          ls -la build/Aura_artefacts/Release/VST3/Aura.vst3/Contents/MacOS/ || ls -la build/Aura_artefacts/VST3/Aura.vst3/Contents/MacOS/
           echo ""
           echo "=== Standalone ==="
-          ls -la build/Aura_artefacts/Release/Standalone/Aura.app/Contents/MacOS/
-          file build/Aura_artefacts/Release/Standalone/Aura.app/Contents/MacOS/Aura
+          ls -la build/Aura_artefacts/Release/Standalone/Aura.app/Contents/MacOS/ || ls -la build/Aura_artefacts/Standalone/Aura.app/Contents/MacOS/
+          echo ""
+          echo "=== Architecture Check ==="
+          file build/Aura_artefacts/Release/VST3/Aura.vst3/Contents/MacOS/Aura || file build/Aura_artefacts/VST3/Aura.vst3/Contents/MacOS/Aura
       
       - name: Create DMG
         run: |
