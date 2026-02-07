@@ -1,0 +1,422 @@
+
+
+ Ich starte eine umfassende Recherche mit Web-Research und Codebase-Analyse parallel. 
+
+Research modern EQ plugin features
+
+
+
+Fetched https://www.fabfilter.com/products/pro-q-4-equalizer-plug-in
+
+
+
+Fetched https://www.tokyodawn.net/tdr-nova/
+
+
+
+Fetched https://docs.juce.com/master/tutorial_audio_processor_value_tree_state.html
+
+
+
+Fetched https://forum.juce.com/t/best-practices-for-processblock/
+
+
+
+Fetched https://github.com/surge-synthesizer/surge
+
+
+
+Fetched https://www.theaudioprogrammer.com/
+
+
+
+Fetched https://www.soundonsound.com/techniques/parametric-eq-explained
+
+
+
+Fetched https://melatonin.dev/blog/audio-plugin-latency-and-tail-time/
+
+
+
+Fetched https://forum.juce.com/t/optimising-audio-performance/
+
+
+
+Fetched https://docs.juce.com/master/tutorial_dsp_introduction.html
+
+
+
+Fetched https://juce.com/tutorials/tutorial_audio_processor_value_tree_state
+
+
+
+Fetched https://juce.com/tutorials/tutorial_dsp_introduction
+
+
+
+Fetched https://melatonin.dev/blog/
+
+
+
+Fetched https://forum.juce.com/t/tips-for-writing-lock-free-audio-code/59410
+
+
+
+Fetched https://www.musicdsp.org/en/latest/Filters/index.html
+
+
+
+Fetched https://melatonin.dev/blog/big-list-of-juce-tips-and-tricks/
+
+
+
+Fetched https://www.musicdsp.org/en/latest/Filters/197-rbj-audio-eq-cookbook.html
+
+
+
+Fetched https://juce.com/tutorials/tutorial_simd_register_optimisation/
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Resources)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/Parameters)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/Utils)
+
+Searched for regex `class.*Processor|processBlock|prepareToPlay|SIMD|linear phase|dynamic EQ|mid.side` (`**/Source/**/*.h`), 20 results
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/PluginProcessor.h#1-1), lines 1 to 100
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/EQProcessor.h)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/EQBand.h#1-1), lines 1 to 80
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/BiquadFilter.h#1-1), lines 1 to 80
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/Parameters/ParameterIDs.h#1-1), lines 1 to 80
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/PluginProcessor.h#100-100), lines 100 to 205
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/Parameters/ParameterIDs.h#80-80), lines 80 to 190
+
+Deep research JUCE EQ optimization
+
+
+
+Fetched https://www.kvraudio.com/forum/viewtopic.php?t=583863
+
+
+
+Fetched https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf
+
+
+
+Fetched https://github.com/juce-framework/JUCE/blob/master/modules/juce_dsp/processors/juce_IIRFilter.h
+
+
+
+Fetched https://melatonin.dev/blog/how-to-build-and-test-audio-plugins-with-pluginval/
+
+
+
+Fetched https://forum.juce.com/t/how-to-use-openglcontext-for-plugin-ui/33289
+
+
+
+Fetched https://www.dsprelated.com/freebooks/filters/Biquad_Software_Implementations.html
+
+
+
+Fetched https://melatonin.dev/blog/using-cmake-with-juce/
+
+
+
+Fetched https://github.com/free-audio/clap-juce-extensions
+
+
+
+Fetched https://cytomic.com/technical-papers
+
+
+
+Fetched https://github.com/Tracktion/pluginval
+
+
+
+Fetched https://docs.juce.com/master/classOpenGLContext.html
+
+
+
+Fetched https://www.dsprelated.com/freebooks/filters/State_Variable_Filters.html
+
+
+
+Fetched https://github.com/juce-framework/JUCE/blob/master/docs/CMake API.md
+
+
+
+Fetched https://www.dsprelated.com/freebooks/sasp/Linear_Phase_Filters.html
+
+
+
+Fetched https://github.com/Tracktion/pluginval/blob/develop/docs/Testing plugins with pluginval.md
+
+
+
+Fetched https://en.wikipedia.org/wiki/State_variable_filter
+
+
+
+Fetched https://docs.juce.com/master/classOpenGLRenderer.html
+
+Analyze Aura codebase for issues
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/DynamicResonanceSuppressor.h#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/HighQualityOversampler.h#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/LiveSmartEQ.h#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/AutoGainCompensation.h#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SpectralMatcher.h#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/DynamicResonanceSuppressor.h#201-201), lines 201 to 508
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/HighQualityOversampler.h#201-201), lines 201 to 511
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/LiveSmartEQ.h#201-201), lines 201 to 500
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/AutoGainCompensation.h#201-201), lines 201 to 253
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SpectralMatcher.h#201-201), lines 201 to 400
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/LiveSmartEQ.h#501-501), lines 501 to 914
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SpectralMatcher.h#401-401), lines 401 to 600
+
+Searched for text `EQProcessor` (`**/Source/DSP/EQProcessor.cpp`), 20 results
+
+Searched for text `SmartAnalyzer` (`**/Source/DSP/SmartAnalyzer.cpp`), 20 results
+
+Searched for text `LicenseManager` (`**/Source/Licensing/LicenseManager.h`), 20 results
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/EQProcessor.cpp)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SmartAnalyzer.cpp#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/Licensing/LicenseManager.h)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/Licensing/LicenseManager.cpp#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/SpectrumAnalyzer.cpp#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/EQCurveComponent.cpp#1-1), lines 1 to 200
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/Licensing/LicenseManager.cpp#200-200), lines 200 to 391
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SmartAnalyzer.cpp#200-200), lines 200 to 500
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/SpectrumAnalyzer.cpp#200-200), lines 200 to 500
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/EQCurveComponent.cpp#200-200), lines 200 to 500
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SmartAnalyzer.cpp#500-500), lines 500 to 800
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/SpectrumAnalyzer.cpp#500-500), lines 500 to 750
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/EQCurveComponent.cpp#500-500), lines 500 to 750
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SmartAnalyzer.h#1-1), lines 1 to 100
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SmartAnalyzer.h#100-100), lines 100 to 384
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/SpectrumAnalyzer.cpp#750-750), lines 750 to 1050
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/EQCurveComponent.cpp#750-750), lines 750 to 1000
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SmartAnalyzer.cpp#800-800), lines 800 to 1100
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP/SmartAnalyzer.cpp#1100-1100), lines 1100 to 1308
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/GUI/EQCurveComponent.cpp#1000-1000), lines 1000 to 1237
+
+Summarized conversation history
+
+Research competitive EQ plugins
+
+
+
+Fetched https://www.fabfilter.com/products/pro-q-4-equalizer-plug-in
+
+
+
+Fetched https://www.tokyodawn.net/tdr-nova/
+
+
+
+Fetched https://docs.juce.com/master/tutorial_audio_processor_value_tree_state.html
+
+
+
+Fetched https://forum.juce.com/t/best-practices-for-real-time-audio-programming/54542
+
+
+
+Fetched https://github.com/surge-synthesizer/surge
+
+
+
+Fetched https://juce.com/tutorials/tutorial_audio_processor_value_tree_state
+
+
+
+Fetched 2 resources
+
+
+
+Fetched https://github.com/free-audio/clap-juce-extensions
+
+
+
+Fetched https://github.com/Tracktion/pluginval
+
+
+
+Fetched https://www.rossbencina.com/code/real-time-audio-programming-101-time-waits-for-nothing
+
+
+
+Fetched 2 resources
+
+
+
+Fetched https://forum.juce.com/t/opengl-spectrum-analyser/31920
+
+
+
+Fetched https://www.dsprelated.com/freebooks/sasp/Linear_Phase_Filters.html
+
+
+
+Fetched https://forum.juce.com/t/realtime-audio-coding-tips/15256
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source)
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/CMakeLists.txt#1-1), lines 1 to 80
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/CMakeLists.txt#80-80), lines 80 to 149
+
+Read [](file:///y%3A/PROJEKTE/VST-PLUGINS/vst2/Source/DSP)
+
+Die Recherche ist abgeschlossen. Ich habe sowohl eine tiefgreifende Codeanalyse als auch eine Wettbewerbsrecherche durchgeführt. Hier ist der Gesamtplan:
+
+---
+
+## Plan: Aura VST Plugin — Weiterentwicklung & Bugfixing
+
+Das Projekt hat 23 identifizierte Code-Probleme (3 kritisch, 7 hoch, 8 mittel, 5 niedrig) sowie signifikante Feature-Lücken gegenüber Wettbewerbern wie FabFilter Pro-Q 4 und TDR Nova. Der Plan priorisiert zunächst die Beseitigung kritischer Audio-Thread-Verletzungen und Bugs, dann Performance-Optimierungen, und schließlich neue Features für Wettbewerbsfähigkeit.
+
+---
+
+### Phase 1 — Kritische Bugs & Audio-Thread-Sicherheit
+
+**Steps**
+
+1. **Resonance Suppressor: Frequenzselektive Unterdrückung implementieren** — In DynamicResonanceSuppressor.h wendet `applyToBuffer()` (Zeile ~256) nur einen **Breitband-Gain** an, statt frequenzselektive Unterdrückung. Die gesamte per-Bin Resonanzerkennung wird zunichtegemacht. Fix: Per-Band IIR-Filterbank oder Overlap-Add Spektralverarbeitung statt `buffer.applyGain(totalLinearGain)`.
+
+2. **`setValueNotifyingHost()` vom Audio-Thread entfernen** — In LiveSmartEQ.h Zeile ~509 ruft `updateEQParameters()` `param->setValueNotifyingHost()` auf, was vom Audio-Thread Message-Thread-Callbacks auslöst. Fix: Parameter-Änderungen über `AsyncUpdater` oder lock-free Queue an den Message-Thread delegieren.
+
+3. **LicenseManager: Static Initialization Order Fiasco beheben** — In LicenseManager.cpp Zeile ~8 wird eine globale statische Instanz erstellt, deren Konstruktor JUCE-Funktionen (File I/O, MD5) vor `main()` aufruft. Fix: Meyer's Singleton verwenden (`static LicenseManager& getInstance() { static LicenseManager inst; return inst; }`).
+
+4. **LicenseManager: Thread-Safety für `getLicenseStatus()`** — In LicenseManager.cpp Zeile ~210 greift `getLicenseStatus()` ohne Synchronisierung auf `propertiesFile` zu. Fix: Mutex für alle File-Zugriffe oder gecachten Status verwenden.
+
+---
+
+### Phase 2 — Audio-Thread Heap-Allokationen entfernen
+
+**Steps**
+
+5. **SpectralMatcher: `resize()`/`push_back()` durch vorab-allokierte Buffers ersetzen** — In SpectralMatcher.h Zeile ~147, ~238, ~380, ~442 gibt es Heap-Allokationen im Audio-nahen Code via `std::vector::resize()`, `push_back()`, und lokale `std::vector`. Fix: Fixed-Size Arrays oder einmalig in `prepare()` allokierte Member-Vektoren.
+
+6. **`previousMagnitudes` Vector-Zuweisung eliminieren** — In DynamicResonanceSuppressor.h Zeile ~458 wird `previousMagnitudes = mags` zugewiesen (Heap bei Größenänderung). Fix: `std::array<float, MAX_BINS>` verwenden.
+
+7. **`getDetectedProblems()` Heap-Allokation im Audio-Pfad** — In SmartAnalyzer.h Zeile ~228 erstellt die Funktion eine `std::vector`-Kopie pro Aufruf, aufgerufen von `LiveSmartEQ::process()`. Fix: Stattdessen `getDetectedProblemsArray()` + `getDetectedProblemsCount()` direkt nutzen.
+
+8. **LiveSmartEQ Settings Struct thread-safe machen** — In LiveSmartEQ.h Zeile ~172 wird `Settings` (>40 Bytes) per einfachem Copy ohne Synchronisierung zwischen UI- und Audio-Thread geteilt. Fix: Atomare Einzelwerte, `juce::SpinLock` mit `ScopedTryLock`, oder Double-Buffering.
+
+---
+
+### Phase 3 — Performance-Optimierungen
+
+**Steps**
+
+9. **Hardcodierte Sample-Rate (44100) korrigieren** — In SpectrumAnalyzer.cpp Zeile ~405 und ~449 wird `44100.0f` hardcodiert. Fix: Tatsächliche Sample-Rate vom `FFTAnalyzer` übernehmen.
+
+10. **HighQualityOversampler: Circular Buffer statt Array-Shift** — In HighQualityOversampler.h Zeile ~340 wird pro Sample ein O(31) Array-Shift durchgeführt (~248 Shifts pro Input-Sample bei 4× OS). Fix: Circular Buffer → O(1).
+
+11. **EQCurveComponent/SpectrumAnalyzer: Magnitude-Response cachen** — In EQCurveComponent.cpp Zeile ~455 und SpectrumAnalyzer.cpp Zeile ~323 gibt es O(width × bands) Aufrufe von `getMagnitudeForFrequency()` pro Frame. Fix: Vorberechnetes Magnitude-Array, nur bei Parameter-Änderung invalidieren.
+
+12. **AutoGainCompensation: Channel-Pointer cachen** — In AutoGainCompensation.h Zeile ~237 wird `getWritePointer(ch)` `numSamples × numChannels` mal aufgerufen. Fix: Pointer vor der Schleife cachen.
+
+13. **SpectralMatcher: Doppelte Gain-Limits korrigieren** — In SpectralMatcher.h Zeile ~268 und ~504 schneidet ein `jlimit(±6dB)` Cuts ab, bevor das asymmetrische Limit (±4/8 dB) greifen kann. Fix: Ersten `jlimit` mit `max(maxBoostDB, maxCutDB)` synchronisieren.
+
+14. **EQProcessor: Input-Gain tatsächlich anwenden** — In EQProcessor.cpp Zeile ~36 wird `inputGainLinear` berechnet aber nie in `processBlock()` verwendet. Fix: `buffer.applyGain(inputGainLinear)` am Anfang einfügen.
+
+---
+
+### Phase 4 — Code-Qualität & Deprecated APIs
+
+**Steps**
+
+15. **~40 verbleibende deprecated `juce::Font` Warnings fixen** — Betroffen: BandPopup.cpp, CustomLookAndFeel.cpp, SmartRecommendationPanel.h, LiveSmartEQPanel.h, LicenseDialog.h, LevelMeter.cpp, AudioSourceSelector.h, PianoRollOverlay.h, ReferenceTrackPanel.h. Alle `Font(size, style)` → `Font(FontOptions(size).withStyle("style"))` migrieren.
+
+16. **DynamicResonanceSuppressor: `fftSize`/`numBins` in `prepare()` setzen** — In DynamicResonanceSuppressor.h Zeile ~345 bleiben die Defaults (2048/1025) immer stehen. Fix: Aus der tatsächlichen FFT-Konfiguration übernehmen.
+
+17. **`cachedLocalAverages` als Temp-Buffer Missbrauch beseitigen** — In DynamicResonanceSuppressor.h Zeile ~473 wird `cachedLocalAverages` als temporärer Buffer wiederverwendet. Fix: Separaten statischen Temp-Buffer verwenden.
+
+18. **EQCurveComponent: Listener-Liste absichern** — In EQCurveComponent.cpp Zeile ~55 werden rohe Pointer gespeichert. Fix: `juce::ListenerList` verwenden oder RAII-Deregistrierung sicherstellen.
+
+---
+
+### Phase 5 — Neue Features (Wettbewerbsfähigkeit)
+
+**Steps**
+
+19. **CLAP-Format Support** — `clap-juce-extensions` als Git-Submodul hinzufügen, `clap_juce_extensions_plugin()` in CMakeLists.txt ergänzen. Minimaler Aufwand, hoher Mehrwert (Bitwig-Markt, Zukunftssicherheit).
+
+20. **GPU-beschleunigte Spektrum-Darstellung** — `juce::OpenGLContext` an den Editor anhängen, Spektrum-Daten als VBO rendern. Reduziert CPU-Last der Spektrumanzeige erheblich und ermöglicht flüssigere 60fps-Darstellung.
+
+21. **SVF-Filter als Alternative für Dynamic EQ** — `juce::dsp::StateVariableTPTFilter` (basierend auf Cytomic SVF) für dynamische Bands nutzen, da SVF bei Parameter-Modulation stabiler ist als Biquad.
+
+22. **Dynamic EQ pro Band** (Threshold, Attack, Release, Ratio) — Natürliche Erweiterung des bestehenden parametrischen EQ. Konkurrenzfähigkeit mit TDR Nova und Pro-Q 4.
+
+23. **Mid/Side Processing pro Band** — Zusätzlicher Stereo-Modus-Parameter pro Band (L/R, M/S). Essentielles Pro-Mastering-Feature.
+
+24. **Linear Phase Modus** — FFT-basierte Convolution mit `juce::dsp::Convolution`, Latenz-Stufen (Low/Medium/High), `setLatencySamples()` korrekt melden.
+
+---
+
+### Verification
+
+- **Build**: `cmake --build build3 --config Release --target Aura_All` nach jeder Phase
+- **pluginval**: `pluginval --strictness-level 5 "build3/Aura_artefacts/Release/VST3/Aura.vst3"` — muss Level 5 bestehen
+- **Audio-Thread-Audit**: Manuell prüfen dass kein `new`/`malloc`/`mutex`/`system call` in `processBlock()` bleibt
+- **Regression-Test**: A/B-Vergleich der Audioausgabe vor/nach Änderungen (besonders Phase 1 und 3)
+- **Sample-Rate-Test**: Plugin bei 44.1kHz, 48kHz, 96kHz, 192kHz testen (besonders Fix #9)
+
+### Decisions
+
+- **Phase 1-4 vor Phase 5**: Bugs und Performance haben Vorrang vor neuen Features
+- **Resonance Suppressor**: IIR-Filterbank statt Overlap-Add (niedrigere Latenz, einfachere Integration)
+- **SVF nur für Dynamic EQ**: Bestehende Biquad-Filter für statische Bands beibehalten (CPU-effizienter)
+- **CLAP-Integration vor GPU-Rendering**: Geringerer Aufwand, schnellerer Mehrwert
+
+---
+
+Soll ich mit Phase 1 (kritische Bugs) beginnen, oder möchtest du die Priorisierung anpassen?

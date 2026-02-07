@@ -1,0 +1,147 @@
+#pragma once
+
+#include <JuceHeader.h>
+#include "PluginProcessor.h"
+#include "GUI/EQCurveComponent.h"
+#include "GUI/SpectrumAnalyzer.h"
+#include "GUI/BandControls.h"
+#include "GUI/BandPopup.h"
+#include "GUI/CustomLookAndFeel.h"
+#include "GUI/PresetComponent.h"
+#include "GUI/EQSketchTool.h"
+#include "GUI/SpectrumGrabTool.h"
+#include "GUI/LevelMeter.h"
+#include "GUI/ThemeSelector.h"
+#include "GUI/SmartHighlightOverlay.h"
+#include "GUI/SmartRecommendationPanel.h"
+#include "GUI/LiveSmartEQPanel.h"
+#include "DSP/SmartEQRecommendation.h"
+#include "Licensing/LicenseManager.h"
+
+/**
+ * AuraAudioProcessorEditor: Haupt-GUI des Plugins.
+ */
+class AuraAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                   public EQCurveComponent::Listener,
+                                   public BandControls::Listener,
+                                   public BandPopup::Listener,
+                                   public PresetComponent::Listener
+{
+public:
+    explicit AuraAudioProcessorEditor(AuraAudioProcessor&);
+    ~AuraAudioProcessorEditor() override;
+
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+    // EQCurveComponent::Listener
+    void bandParameterChanged(int bandIndex, float frequency, float gain, float q) override;
+    void bandSelected(int bandIndex) override;
+    void bandCreated(int bandIndex, float frequency) override;
+    void filterTypeChanged(int bandIndex, ParameterIDs::FilterType type) override;
+    void bandDeleted(int bandIndex) override;
+    void bandRightClicked(int bandIndex) override;  // Rechtsklick -> Popup zeigen
+
+    // BandControls::Listener
+    void bandControlChanged(int bandIndex, const juce::String& parameterName, float value) override;
+
+    // BandPopup::Listener
+    void bandPopupValueChanged(int bandIndex, const juce::String& parameterName, float value) override;
+    void bandPopupDeleteRequested(int bandIndex) override;
+    void bandPopupBypassChanged(int bandIndex, bool bypassed) override;
+
+    // PresetComponent::Listener
+    void presetSelected(const PresetManager::PresetData& preset) override;
+
+private:
+    AuraAudioProcessor& audioProcessor;
+    CustomLookAndFeel customLookAndFeel;
+
+    // Haupt-Komponenten
+    SpectrumAnalyzer spectrumAnalyzer;
+    EQCurveComponent eqCurve;
+    BandControls bandControls;
+    BandPopup bandPopup;
+    PresetComponent presetComponent { &audioProcessor };
+    EQSketchTool eqSketchTool;
+    SpectrumGrabTool spectrumGrabTool;
+    LevelMeter levelMeter;  // Neue Pegel-Anzeige
+    ThemeSelector themeSelector;  // Theme-Auswahl
+    juce::TextButton licenseButton;  // Lizenz-Button
+    
+    // Smart EQ Komponenten
+    SmartHighlightOverlay smartHighlightOverlay;
+    SmartRecommendationPanel smartRecommendationPanel;
+    SmartEQRecommendation smartEQRecommendation;
+    juce::ToggleButton smartModeButton;
+    
+    // Live Smart EQ Panel
+    std::unique_ptr<LiveSmartEQPanel> liveSmartEQPanel;
+
+    // Globale Controls
+    juce::Slider outputGainSlider;
+    juce::Label outputGainLabel;
+    juce::Slider inputGainSlider;
+    juce::Label inputGainLabel;
+    juce::ToggleButton linearPhaseButton;
+    juce::Label linearPhaseLabel;
+    juce::ToggleButton midSideButton;
+    juce::ToggleButton analyzerButton;
+    juce::ComboBox analyzerModeCombo;
+    juce::ToggleButton sketchModeButton;
+    juce::ToggleButton grabModeButton;
+    juce::TextButton resetButton;  // Reset-Button für alle Bänder
+
+    // Analyzer-Settings (Pro-Q Style)
+    juce::ComboBox analyzerResolutionCombo;
+    juce::ComboBox analyzerRangeCombo;
+    juce::ComboBox analyzerSpeedCombo;
+    juce::ComboBox eqScaleCombo;  // EQ Gain Scale Selector
+    juce::Slider analyzerTiltSlider;
+    juce::ToggleButton analyzerTiltButton;
+    juce::ToggleButton analyzerFreezeButton;
+    juce::ToggleButton analyzerPeaksButton;
+
+    // APVTS Attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> linearPhaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> analyzerOnAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analyzerModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> smartModeAttachment;
+
+    // Analyzer-Settings Helper
+    void setupAnalyzerControls();
+    void updateAnalyzerSettings();
+
+    // Timer für GUI-Updates
+    class UpdateTimer : public juce::Timer
+    {
+    public:
+        UpdateTimer(AuraAudioProcessorEditor& e) : editor(e) {}
+        void timerCallback() override { editor.updateFromProcessor(); }
+    private:
+        AuraAudioProcessorEditor& editor;
+    };
+    UpdateTimer updateTimer;
+
+    void updateFromProcessor();
+    void setupOutputControls();
+    void updateBandControlsDisplay();
+    void applyPreset(const PresetManager::PresetData& preset);
+    
+    // Smart EQ Methoden
+    void setupSmartEQ();
+    void updateSmartAnalysis();
+    void applySmartRecommendation(int index);
+    void applyAllSmartRecommendations();
+    
+    // Zeige Popup bei Rechtsklick auf Band
+    void showBandPopup(int bandIndex);
+    
+    // Fenster-Größen-Persistierung
+    bool loadWindowSize(int& width, int& height);
+    void saveWindowSize(int width, int height);
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AuraAudioProcessorEditor)
+};

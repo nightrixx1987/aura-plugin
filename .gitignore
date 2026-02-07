@@ -1,0 +1,69 @@
+# Build-Verzeichnisse
+build/
+build2/
+build3/
+build*/
+out/
+cmake-build-*/
+
+# CMake generierte Dateien
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.slnx
+
+# Kompilierte Artefakte
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+*.exe
+*.vst3
+*.component
+*.clap
+
+# Backup-Verzeichnisse
+Backup_*/
+
+# IDE-Dateien
+.vs/
+.vscode/settings.json
+*.user
+*.suo
+*.ncb
+*.opendb
+*.VC.db
+
+# OS-Dateien
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# JUCE generierte Dateien
+JuceLibraryCode/
+
+# Logs
+*.log
+*.tlog
+
+# Temporäre Dateien
+*.tmp
+*.temp
+*~
+
+# Test-Verzeichnisse
+test_update/
+
+# Node.js (MCP tools)
+node_modules/
+package-lock.json
+
+# MCP Tools (lokal)
+mcp-project-analyzer/
+vscode-mcp-autostarter/

@@ -1,0 +1,50 @@
+AURA END USER LICENSE AGREEMENT
+
+Copyright (c) 2024 Unproved Audio. All rights reserved.
+
+This End User License Agreement ("Agreement") is a legal agreement between you
+("User") and Unproved Audio ("Company") for the use of Aura audio plugin software
+("Software").
+
+BY INSTALLING OR USING THE SOFTWARE, YOU AGREE TO BE BOUND BY THE TERMS OF THIS
+AGREEMENT.
+
+1. LICENSE GRANT
+   The Company grants you a non-exclusive, non-transferable license to install
+   and use the Software on your computers for personal or commercial music
+   production purposes.
+
+2. TRIAL VERSION
+   The trial version of the Software is fully functional for 30 days. After the
+   trial period, a valid license key is required for continued use.
+
+3. RESTRICTIONS
+   You may not:
+   - Redistribute, sell, or sublicense the Software
+   - Reverse engineer, decompile, or disassemble the Software
+   - Remove any proprietary notices from the Software
+   - Use the Software for any illegal purpose
+
+4. INTELLECTUAL PROPERTY
+   The Software and all copies thereof are proprietary to the Company and title
+   and intellectual property rights therein remain with the Company.
+
+5. DISCLAIMER OF WARRANTIES
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+6. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL THE COMPANY BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OF THE SOFTWARE.
+
+7. TERMINATION
+   This license is effective until terminated. It will terminate automatically
+   if you fail to comply with any term of this Agreement.
+
+8. GOVERNING LAW
+   This Agreement shall be governed by the laws of Germany.
+
+For questions or support, visit: www.unproved-audio.de
+
+Unproved Audio
