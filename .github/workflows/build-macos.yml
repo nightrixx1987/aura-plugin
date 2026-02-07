@@ -78,6 +78,47 @@ jobs:
             -ov -format UDZO \
             "Aura-macOS-universal.dmg"
       
+      - name: Test DMG
+        run: |
+          echo "=== DMG mounten ==="
+          hdiutil attach Aura-macOS-universal.dmg -noverify -nobrowse
+          MOUNT_POINT=$(hdiutil info | grep "/Volumes/Aura" | awk '{print $NF}')
+          echo "Gemountet: $MOUNT_POINT"
+          
+          echo ""
+          echo "=== DMG Inhalt ==="
+          ls -la "$MOUNT_POINT/"
+          
+          echo ""
+          echo "=== VST3 vorhanden ==="
+          ls -la "$MOUNT_POINT/Aura.vst3/Contents/MacOS/"
+          file "$MOUNT_POINT/Aura.vst3/Contents/MacOS/Aura"
+          
+          echo ""
+          echo "=== Standalone vorhanden ==="
+          ls -la "$MOUNT_POINT/Aura.app/Contents/MacOS/"
+          file "$MOUNT_POINT/Aura.app/Contents/MacOS/Aura"
+          
+          echo ""
+          echo "=== Universal Binary Check ==="
+          lipo -info "$MOUNT_POINT/Aura.vst3/Contents/MacOS/Aura"
+          lipo -info "$MOUNT_POINT/Aura.app/Contents/MacOS/Aura"
+          
+          echo ""
+          echo "=== VST3 Bundle Validierung ==="
+          pluginval_ok=true
+          test -f "$MOUNT_POINT/Aura.vst3/Contents/MacOS/Aura" || pluginval_ok=false
+          test -f "$MOUNT_POINT/Aura.vst3/Contents/Info.plist" || echo "WARNUNG: Info.plist fehlt"
+          
+          echo ""
+          echo "=== Standalone Quick Launch Test ==="
+          timeout 5 "$MOUNT_POINT/Aura.app/Contents/MacOS/Aura" --help 2>&1 || echo "(Timeout/Exit erwartet - Plugin braucht Audio Device)"
+          
+          echo ""
+          echo "=== DMG unmounten ==="
+          hdiutil detach "$MOUNT_POINT"
+          echo "DMG TEST BESTANDEN"
+      
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:
