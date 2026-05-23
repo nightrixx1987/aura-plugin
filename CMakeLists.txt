@@ -5,9 +5,10 @@ project(Aura VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# LTO standardmäßig AUS für schnelle Dev-Builds
-# Für finale Releases: cmake -B build3 [...] -DAURA_ENABLE_LTO=ON
-option(AURA_ENABLE_LTO "Enable Link-Time Optimization (slow linking, ~5% faster runtime)" OFF)
+# LTO standardmäßig AN für Release-Builds
+# Für Dev-Builds: cmake -B build [...] -DAURA_ENABLE_LTO=OFF
+option(AURA_ENABLE_LTO "Enable Link-Time Optimization (slow linking, ~5% faster runtime)" ON)
+option(AURA_ENABLE_BENCHMARKS "Build Aura benchmark executables" ON)
 
 # ===== Build-Optimierungen =====
 if(MSVC)
@@ -45,11 +46,10 @@ set(PLUGIN_SOURCES
     # DSP
     Source/DSP/ABComparison.h
     Source/DSP/AdvancedFilterDesigns.h
-    Source/DSP/AdvancedProcessing.cpp
-    Source/DSP/AdvancedProcessing.h
     Source/DSP/AutoGainCompensation.h
     Source/DSP/BiquadFilter.cpp
     Source/DSP/BiquadFilter.h
+    Source/DSP/CharacterProcessor.h
     Source/DSP/DynamicResonanceSuppressor.h
     Source/DSP/EQBand.cpp
     Source/DSP/EQBand.h
@@ -61,6 +61,7 @@ set(PLUGIN_SOURCES
     Source/DSP/InstrumentProfiles.h
     Source/DSP/LinearPhaseEQ.h
     Source/DSP/LiveSmartEQ.h
+    Source/DSP/MixedPhaseEQ.h
     Source/DSP/PsychoAcousticModel.h
     Source/DSP/SVFFilter.h
     Source/DSP/ReferenceAudioPlayer.h
@@ -69,6 +70,20 @@ set(PLUGIN_SOURCES
     Source/DSP/SmartEQRecommendation.h
     Source/DSP/SpectralAnalysis.h
     Source/DSP/SpectralMatcher.h
+    
+    # v2.0: Neue DSP Module
+    Source/DSP/AIExplanationEngine.h
+    Source/DSP/CrossChannelManager.h
+    Source/DSP/CustomProfileManager.h
+    Source/DSP/GenreMorphSlider.h
+    Source/DSP/LUFSAutoGain.h
+    Source/DSP/MultiReferenceManager.h
+    Source/DSP/ParallelProcessor.h
+    Source/DSP/SidechainDynamicEQ.h
+    Source/DSP/SpectralDynamicsProcessor.h
+    Source/DSP/TemporalPatternDetector.h
+    Source/DSP/TransientDetector.h
+    Source/DSP/WebSearchEngine.h
     
     # GUI
     Source/GUI/AudioSourceSelector.h
@@ -95,7 +110,18 @@ set(PLUGIN_SOURCES
     Source/GUI/SpectrumGrabTool.h
     Source/GUI/ThemeManager.h
     Source/GUI/ThemeSelector.h
+    Source/GUI/AuraSettingsPanel.h
     Source/GUI/UpdateNotification.h
+    
+    # v2.0: Neue GUI Module
+    Source/GUI/CrossChannelPanel.h
+    Source/GUI/CustomProfilePanel.h
+    Source/GUI/EQSketchTool.h
+    Source/GUI/GenreMorphWidget.h
+    Source/GUI/MultiReferencePanel.h
+    Source/GUI/SpectralDynamicsPanel.h
+    Source/GUI/TutorialOverlay.h
+    Source/GUI/WebSearchPanel.h
     
     # Parameters
     Source/Parameters/ParameterIDs.h
@@ -116,11 +142,16 @@ set(PLUGIN_SOURCES
     Source/Utils/VersionInfo.h
     Source/Utils/VirtualAudioDeviceDetector.h
     Source/Utils/WASAPILoopbackCapture.h
+    
+    # Folgende Dateien wurden entfernt (v2.5):
+    #   Source/DSP/AdvancedProcessing.h/.cpp  (veraltet, durch MidSideProcessor ersetzt)
+    #   Source/GUI/LicenseDialog.cpp          (veraltet, durch Licensing/LicenseDialog.h ersetzt)
 )
 
 # JUCE Plugin konfigurieren
 juce_add_plugin(Aura
     COMPANY_NAME "Unproved Audio"
+    BUNDLE_ID "com.unproved-audio.aura"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -167,8 +198,8 @@ target_link_libraries(Aura
         juce::juce_opengl
     PUBLIC
         juce::juce_recommended_config_flags
-        # LTO (Link-Time Optimization) nur für finale Releases aktivieren:
-        #   cmake -B build3 -G "Visual Studio 18 2026" -A x64 -DAURA_ENABLE_LTO=ON
+        # LTO (Link-Time Optimization) standardmäßig aktiviert für Release-Builds:
+        #   cmake -B build -G "Visual Studio 18 2026" -A x64
         $<$<BOOL:${AURA_ENABLE_LTO}>:juce::juce_recommended_lto_flags>
         juce::juce_recommended_warning_flags
 )
@@ -186,3 +217,91 @@ if(CLAP_SUPPORT)
         CLAP_FEATURES "audio-effect" "equalizer" "analyzer"
     )
 endif()
+
+# Mikro-Benchmarks für reproduzierbare Performance-Messungen
+if(AURA_ENABLE_BENCHMARKS)
+    juce_add_console_app(AuraBenchmarks
+        PRODUCT_NAME "AuraBenchmarks"
+    )
+
+    target_sources(AuraBenchmarks PRIVATE
+        tools/benchmarks/EQCurveBenchmark.cpp
+        Source/DSP/BiquadFilter.cpp
+        Source/DSP/EQBand.cpp
+        Source/DSP/EQProcessor.cpp
+        Source/DSP/FFTAnalyzer.cpp
+        Source/DSP/SmartAnalyzer.cpp
+    )
+
+    target_compile_definitions(AuraBenchmarks
+        PUBLIC
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+    )
+
+    target_link_libraries(AuraBenchmarks
+        PRIVATE
+            juce::juce_audio_basics
+            juce::juce_core
+            juce::juce_dsp
+            juce::juce_graphics
+        PUBLIC
+            juce::juce_recommended_config_flags
+            $<$<BOOL:${AURA_ENABLE_LTO}>:juce::juce_recommended_lto_flags>
+            juce::juce_recommended_warning_flags
+    )
+
+    target_include_directories(AuraBenchmarks PRIVATE Source)
+
+    juce_generate_juce_header(AuraBenchmarks)
+endif()
+
+# ===== Unit Tests (JUCE built-in test framework) =====
+option(AURA_ENABLE_TESTS "Build Aura unit tests" ON)
+
+if(AURA_ENABLE_TESTS)
+    juce_add_console_app(AuraTests
+        PRODUCT_NAME "AuraTests"
+    )
+
+    target_sources(AuraTests PRIVATE
+        tests/AuraTests.cpp
+        Source/DSP/BiquadFilter.cpp
+        Source/DSP/EQBand.cpp
+        Source/DSP/EQProcessor.cpp
+        Source/DSP/FFTAnalyzer.cpp
+        Source/DSP/SmartAnalyzer.cpp
+        Source/DSP/WebSearchEngine.h
+    )
+
+    target_compile_definitions(AuraTests
+        PUBLIC
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_MODULE_AVAILABLE_juce_audio_basics=1
+            JUCE_MODULE_AVAILABLE_juce_audio_utils=1
+            JUCE_MODULE_AVAILABLE_juce_dsp=1
+    )
+
+    target_link_libraries(AuraTests
+        PRIVATE
+            juce::juce_audio_basics
+            juce::juce_audio_utils
+            juce::juce_core
+            juce::juce_dsp
+            juce::juce_events
+        PUBLIC
+            juce::juce_recommended_config_flags
+            $<$<BOOL:${AURA_ENABLE_LTO}>:juce::juce_recommended_lto_flags>
+            juce::juce_recommended_warning_flags
+    )
+
+    target_include_directories(AuraTests PRIVATE Source)
+
+    juce_generate_juce_header(AuraTests)
+
+    # Add CTest support
+    enable_testing()
+    add_test(NAME AuraTests COMMAND AuraTests)
+endif()
+

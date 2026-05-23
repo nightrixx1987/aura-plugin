@@ -8,9 +8,18 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
       spectrumGrabTool(audioProcessor.getEQProcessor())
 {
     // GPU-beschleunigtes Rendering aktivieren (beschleunigt Spektrum-Darstellung erheblich)
-    openGLContext.setComponentPaintingEnabled(true);
-    openGLContext.setContinuousRepainting(false);
-    openGLContext.attachTo(*this);
+    // Graceful Fallback: Falls OpenGL nicht verfügbar, Software-Rendering verwenden
+    try
+    {
+        openGLContext.setComponentPaintingEnabled(true);
+        openGLContext.setContinuousRepainting(false);
+        openGLContext.attachTo(*this);
+    }
+    catch (...)
+    {
+        // OpenGL nicht verfügbar - Software-Rendering wird automatisch genutzt
+        DBG("OpenGL nicht verfügbar - verwende Software-Rendering");
+    }
     
     // LookAndFeel setzen
     setLookAndFeel(&customLookAndFeel);
@@ -34,15 +43,21 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
     {
         // Spektrum-Analyzer
         spectrumAnalyzer.setAnalyzer(&audioProcessor.getPreAnalyzer(), &audioProcessor.getPostAnalyzer());
+        // Obere Frequenzgrenze an Samplerate anpassen (max 20kHz, aber nie über Nyquist)
+        float nyquist = static_cast<float>(audioProcessor.getSampleRate()) * 0.5f;
+        float displayMax = std::min(20000.0f, nyquist * 0.95f); // 95% Nyquist vermeidet Aliasing-Artefakte am Rand
+        spectrumAnalyzer.setFrequencyRange(20.0f, displayMax);
         addAndMakeVisible(spectrumAnalyzer);
         
         // EQ-Kurve
         eqCurve.setEQProcessor(&audioProcessor.getEQProcessor());
         eqCurve.addListener(this);
+        eqCurve.setSketchTool(&audioProcessor.getEQSketchTool());
         addAndMakeVisible(eqCurve);
         
         // Grab Tool
         addAndMakeVisible(spectrumGrabTool);
+        spectrumGrabTool.setVisible(false);
         
         // Level Meter (rechte Seite) - Pro-Q4 Style
         addAndMakeVisible(levelMeter);
@@ -59,10 +74,19 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
         };
         addAndMakeVisible(licenseButton);
         
+        // NEU: Einstellungen-Button
+        settingsButton.setButtonText("Settings");
+        settingsButton.setTooltip("Einstellungen\nAudio/MIDI-Einstellungen, Darstellung und Plugin-Defaults.");
+        settingsButton.onClick = [this]()
+        {
+            AuraSettingsPanel::showAsDialog();
+        };
+        addAndMakeVisible(settingsButton);
+        
         // NEU: System Audio Button (nur Standalone)
         systemAudioButton.setButtonText("Sys Audio");
         systemAudioButton.setClickingTogglesState(true);
-        systemAudioButton.setTooltip("System Audio Capture (WASAPI Loopback)\nNimmt den gesamten Windows Audio Output auf und zeigt ihn im Analyzer an.\nSo kannst du z.B. Spotify oder YouTube analysieren und EQ-Einstellungen vornehmen.\n\nACHTUNG: Der Plugin-Output wird stumm geschaltet, um Feedback zu vermeiden!");
+        systemAudioButton.setTooltip("System Audio Capture (WASAPI Loopback)\nNimmt den gesamten Windows Audio Output auf und zeigt ihn im Analyzer an.\nSo kannst du z.B. Spotify oder YouTube analysieren und EQ-Einstellungen vornehmen.\n\nWaehle ein Ausgabegeraet um das bearbeitete Signal zu hoeren!");
         systemAudioButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff00aa88));
         systemAudioButton.onClick = [this]()
         {
@@ -73,14 +97,18 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
             {
                 if (capture.startCapture())
                 {
+                    // Output-Device ComboBox befüllen und anzeigen
+                    refreshSysAudioOutputDevices();
+                    sysAudioOutputCombo.setVisible(true);
+                    sysAudioOutputLabel.setVisible(true);
+                    
                     auto options = juce::MessageBoxOptions()
                         .withIconType(juce::MessageBoxIconType::InfoIcon)
                         .withTitle("System Audio Capture")
                         .withMessage("Windows Audio wird jetzt analysiert!\n\n"
-                                     "WICHTIG: Der Output von Aura ist STUMM geschaltet,\n"
-                                     "um Feedback/Rueckkopplung zu vermeiden.\n\n"
-                                     "Der Original-Sound kommt weiterhin aus Windows.\n"
-                                     "Du siehst das Spektrum und kannst EQ-Einstellungen machen.")
+                                     "Waehle unter 'Ausgabe' ein Geraet (z.B. TR-8S, M-Audio),\n"
+                                     "um das bearbeitete Signal zu hoeren.\n\n"
+                                     "Ohne Ausgabegeraet ist der Output stumm (Anti-Feedback).")
                         .withButton("OK");
                     juce::AlertWindow::showAsync(options, nullptr);
                 }
@@ -98,12 +126,60 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
             else
             {
                 capture.stopCapture();
+                sysAudioOutputCombo.setVisible(false);
+                sysAudioOutputLabel.setVisible(false);
             }
+            resized();
         };
         addAndMakeVisible(systemAudioButton);
         
-        // Theme-Listener registrieren
-        ThemeManager::getInstance().onThemeChanged = [this](ThemeManager::ThemeID /*id*/)
+        // NEU: Output-Device Routing ComboBox (nur sichtbar wenn Sys Audio aktiv)
+        sysAudioOutputLabel.setText("Ausgabe:", juce::dontSendNotification);
+        sysAudioOutputLabel.setFont(juce::Font(juce::FontOptions(11.0f)));
+        sysAudioOutputLabel.setJustificationType(juce::Justification::centredRight);
+        sysAudioOutputLabel.setVisible(false);
+        addAndMakeVisible(sysAudioOutputLabel);
+        
+        sysAudioOutputCombo.setTooltip("Ausgabegeraet fuer das bearbeitete Signal.\n"
+                                        "Waehle ein anderes Geraet als den Windows-Standard-Ausgang,\n"
+                                        "um Feedback zu vermeiden.\n\n"
+                                        "Beispiele: TR-8S, M-Audio M-Track Solo, Kopfhoerer etc.");
+        sysAudioOutputCombo.addItem("-- Kein Output (Stumm) --", 1);
+        sysAudioOutputCombo.setSelectedId(1, juce::dontSendNotification);
+        sysAudioOutputCombo.setVisible(false);
+        sysAudioOutputCombo.onChange = [this]()
+        {
+            auto& capture = audioProcessor.getSystemAudioCapture();
+            int selectedId = sysAudioOutputCombo.getSelectedId();
+            
+            if (selectedId <= 1)
+            {
+                // Kein Output → Routing stoppen
+                capture.stopOutputRouting();
+            }
+            else
+            {
+                // Device-ID aus der Item-Text extrahieren (gespeichert in Properties)
+                juce::String deviceId = sysAudioOutputCombo.getProperties()["deviceId_" + juce::String(selectedId)].toString();
+                if (deviceId.isNotEmpty())
+                {
+                    if (!capture.startOutputRouting(deviceId))
+                    {
+                        auto options = juce::MessageBoxOptions()
+                            .withIconType(juce::MessageBoxIconType::WarningIcon)
+                            .withTitle("Output-Routing")
+                            .withMessage("Konnte das Ausgabegeraet nicht oeffnen.\n\nBitte waehle ein anderes Geraet.")
+                            .withButton("OK");
+                        juce::AlertWindow::showAsync(options, nullptr);
+                        sysAudioOutputCombo.setSelectedId(1, juce::dontSendNotification);
+                    }
+                }
+            }
+        };
+        addAndMakeVisible(sysAudioOutputCombo);
+        
+        // Theme-Listener registrieren (thread-safe)
+        ThemeManager::getInstance().setOnThemeChanged([this](ThemeManager::ThemeID /*id*/)
         {
             customLookAndFeel.updateColors();
             repaint();
@@ -114,7 +190,7 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
                 if (auto* child = getChildComponent(i))
                     child->repaint();
             }
-        };
+        });
     }
     catch (const std::exception&)
     {
@@ -133,7 +209,7 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
 
     // Reset-Button
     resetButton.setButtonText("Reset");
-    resetButton.setTooltip("Alle EQ-Baender zuruecksetzen\nSetzt Frequenz, Gain, Q-Faktor und Filtertyp\naller Baender auf die Standardwerte zurueck.");
+    resetButton.setTooltip("Reset All EQ Bands\nResets frequency, gain, Q-factor and filter type\nof all bands to default values.");
     resetButton.onClick = [this]()
     {
         // Bestätigungsdialog mit moderner JUCE 8 API
@@ -156,14 +232,45 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
     
     // NEU: Undo/Redo Buttons
     undoButton.setButtonText(juce::CharPointer_UTF8("\xe2\x86\xa9"));  // ↩ Undo Symbol
-    undoButton.setTooltip("Rueckgaengig (Strg+Z)\nMacht die letzte Parameter-Aenderung rueckgaengig.");
+    undoButton.setTooltip("Undo (Ctrl+Z)\nReverts the last parameter change.");
     undoButton.onClick = [this]() { audioProcessor.getUndoManager().undo(); };
     addAndMakeVisible(undoButton);
     
     redoButton.setButtonText(juce::CharPointer_UTF8("\xe2\x86\xaa"));  // ↪ Redo Symbol
-    redoButton.setTooltip("Wiederherstellen (Strg+Y)\nStellt eine rueckgaengig gemachte Aenderung wieder her.");
+    redoButton.setTooltip("Redo (Ctrl+Y)\nReapplies a previously undone change.");
     redoButton.onClick = [this]() { audioProcessor.getUndoManager().redo(); };
     addAndMakeVisible(redoButton);
+
+    // ===== Toolbar Tabs (Processing | Smart | Analyzer) =====
+    processingTabButton.setButtonText("Processing");
+    processingTabButton.setClickingTogglesState(true);
+    processingTabButton.onClick = [this]()
+    {
+        currentToolbarTab_ = ToolbarTab::Processing;
+        applyToolbarTabVisibility();
+        resized();
+    };
+    addAndMakeVisible(processingTabButton);
+
+    smartTabButton.setButtonText("Smart");
+    smartTabButton.setClickingTogglesState(true);
+    smartTabButton.onClick = [this]()
+    {
+        currentToolbarTab_ = ToolbarTab::Smart;
+        applyToolbarTabVisibility();
+        resized();
+    };
+    addAndMakeVisible(smartTabButton);
+
+    analyzerTabButton.setButtonText("Analyzer");
+    analyzerTabButton.setClickingTogglesState(true);
+    analyzerTabButton.onClick = [this]()
+    {
+        currentToolbarTab_ = ToolbarTab::Analyzer;
+        applyToolbarTabVisibility();
+        resized();
+    };
+    addAndMakeVisible(analyzerTabButton);
 
     // Preset-Component
     presetComponent.addListener(this);
@@ -177,6 +284,12 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
     
     // Smart EQ Setup
     setupSmartEQ();
+
+    // Toolbar Tabs initialisieren
+    processingTabButton.setToggleState(true, juce::dontSendNotification);
+    smartTabButton.setToggleState(false, juce::dontSendNotification);
+    analyzerTabButton.setToggleState(false, juce::dontSendNotification);
+    applyToolbarTabVisibility();
     
     // Initiale Band-Daten setzen
     updateFromProcessor();
@@ -201,15 +314,19 @@ AuraAudioProcessorEditor::AuraAudioProcessorEditor(AuraAudioProcessor& p)
     updateTrialBanner();
     
     // ===== NEU: Startup-Dialog bei abgelaufener Trial =====
-    auto licStatus = LicenseManager::getInstance().getLicenseStatus();
-    if (licStatus == LicenseManager::LicenseStatus::TrialExpired)
     {
-        // Dialog nach kurzem Delay oeffnen (damit GUI erst fertig aufgebaut ist)
-        auto safePtrForTrial = juce::Component::SafePointer<AuraAudioProcessorEditor>(this);
-        juce::Timer::callAfterDelay(500, [safePtrForTrial]() {
-            if (safePtrForTrial != nullptr)
-                safePtrForTrial->showLicenseDialog();
-        });
+        auto& lm = LicenseManager::getInstance();
+        lm.refreshCachedStatus();
+        auto licStatus = lm.getCachedLicenseStatus();
+        if (licStatus == LicenseManager::LicenseStatus::TrialExpired)
+        {
+            // Dialog nach kurzem Delay oeffnen (damit GUI erst fertig aufgebaut ist)
+            auto safePtrForTrial = juce::Component::SafePointer<AuraAudioProcessorEditor>(this);
+            juce::Timer::callAfterDelay(500, [safePtrForTrial]() {
+                if (safePtrForTrial != nullptr)
+                    safePtrForTrial->showLicenseDialog();
+            });
+        }
     }
 
     // ===== Online-Lizenz-Check bei jedem Start =====
@@ -259,7 +376,8 @@ AuraAudioProcessorEditor::~AuraAudioProcessorEditor()
     eqCurve.stopCurveUpdates();
     
     // OpenGL-Context VOR allen Komponenten detachen (wichtig!)
-    openGLContext.detach();
+    if (openGLContext.isAttached())
+        openGLContext.detach();
     
     // Lizenz-Dialog schliessen falls offen
     licenseDialogWindow.reset();
@@ -271,6 +389,84 @@ AuraAudioProcessorEditor::~AuraAudioProcessorEditor()
     setLookAndFeel(nullptr);
 }
 
+//==============================================================================
+// Sys Audio Output-Routing: Verfügbare Ausgabegeräte laden
+//==============================================================================
+void AuraAudioProcessorEditor::refreshSysAudioOutputDevices()
+{
+    auto& capture = audioProcessor.getSystemAudioCapture();
+    auto devices = capture.getAvailableOutputDevices();
+    
+    sysAudioOutputCombo.clear(juce::dontSendNotification);
+    sysAudioOutputCombo.addItem("-- Kein Output (Stumm) --", 1);
+    
+    int itemId = 2;
+    for (const auto& device : devices)
+    {
+        // Standard-Ausgabegerät markieren (Feedback-Warnung)
+        juce::String label = device.name;
+        if (device.isDefault)
+            label += " [Standard - Feedback!]";
+        
+        sysAudioOutputCombo.addItem(label, itemId);
+        
+        // Device-ID als Property speichern für späteren Zugriff
+        sysAudioOutputCombo.getProperties().set("deviceId_" + juce::String(itemId), device.id);
+        
+        ++itemId;
+    }
+    
+    sysAudioOutputCombo.setSelectedId(1, juce::dontSendNotification);
+}
+
+void AuraAudioProcessorEditor::applyToolbarTabVisibility()
+{
+    const bool showProcessing = (currentToolbarTab_ == ToolbarTab::Processing);
+    const bool showSmart = (currentToolbarTab_ == ToolbarTab::Smart);
+    const bool showAnalyzer = (currentToolbarTab_ == ToolbarTab::Analyzer);
+
+    processingTabButton.setToggleState(showProcessing, juce::dontSendNotification);
+    smartTabButton.setToggleState(showSmart, juce::dontSendNotification);
+    analyzerTabButton.setToggleState(showAnalyzer, juce::dontSendNotification);
+
+    // Processing Tab: Alle Buttons direkt sichtbar
+    undoButton.setVisible(showProcessing);
+    redoButton.setVisible(showProcessing);
+    oversamplingCombo.setVisible(showProcessing);
+    eqQualityCombo.setVisible(showProcessing);
+    characterModeCombo.setVisible(showProcessing);
+    phaseModeCombo.setVisible(showProcessing);
+    const bool showMixedPhaseCrossover = showProcessing && (phaseModeCombo.getSelectedId() == 3);
+    phaseCrossoverSlider.setVisible(showMixedPhaseCrossover);
+    deltaButton.setVisible(showProcessing);
+    suppressorButton.setVisible(showProcessing);
+
+    // Smart Tab: Alle Buttons direkt sichtbar
+    smartModeButton.setVisible(showSmart);
+    referenceButton.setVisible(showSmart);
+    grabModeButton.setVisible(showSmart);
+    eqSketchButton.setVisible(showSmart);
+    genreMorphButton.setVisible(showSmart);
+    multiRefButton.setVisible(showSmart);
+    tutorialButton.setVisible(showSmart);
+    spectralDynButton.setVisible(showSmart);
+    crossChannelButton.setVisible(showSmart);
+
+    // Analyzer Tab: Alle Buttons direkt sichtbar
+    analyzerButton.setVisible(showAnalyzer);
+    phaseButton.setVisible(showAnalyzer);
+    analyzerModeCombo.setVisible(showAnalyzer);
+    midSideButton.setVisible(showAnalyzer);
+
+    // Legacy-Proxy bleibt unsichtbar, wird nur für alte States/Automationen synchron gehalten
+    linearPhaseButton.setVisible(false);
+    
+    // Accordion Buttons ausblenden (nicht mehr benötigt)
+    processingExpandButton.setVisible(false);
+    smartExpandButton.setVisible(false);
+    analyzerExpandButton.setVisible(false);
+}
+
 void AuraAudioProcessorEditor::setupOutputControls()
 {
     // Input Gain Slider
@@ -278,7 +474,8 @@ void AuraAudioProcessorEditor::setupOutputControls()
     inputGainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
     inputGainSlider.setRange(-24.0f, 24.0f, 0.1f);
     inputGainSlider.setValue(0.0f);
-    inputGainSlider.setTooltip("Input Gain (-24 bis +24 dB)\nRegelt die Eingangslautstaerke vor dem EQ.\nNuetzlich um Headroom zu schaffen oder leise Signale anzuheben.");
+    inputGainSlider.setDoubleClickReturnValue(true, 0.0f);
+    inputGainSlider.setTooltip("Input Gain (-24 to +24 dB)\nAdjusts the input volume before the EQ.\nUseful for creating headroom or boosting quiet signals.\nDouble-click to reset to 0 dB.");
     addAndMakeVisible(inputGainSlider);
 
     inputGainLabel.setText("Input", juce::dontSendNotification);
@@ -293,7 +490,8 @@ void AuraAudioProcessorEditor::setupOutputControls()
     outputGainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
     outputGainSlider.setRange(-24.0f, 24.0f, 0.1f);
     outputGainSlider.setValue(0.0f);
-    outputGainSlider.setTooltip("Output Gain (-24 bis +24 dB)\nRegelt die Ausgangslautstaerke nach dem EQ.\nVerwende dies um Lautstaerkeunterschiede nach dem EQ auszugleichen.");
+    outputGainSlider.setDoubleClickReturnValue(true, 0.0f);
+    outputGainSlider.setTooltip("Output Gain (-24 to +24 dB)\nAdjusts the output volume after the EQ.\nUse this to compensate for level changes caused by EQ.\nDouble-click to reset to 0 dB.");
     addAndMakeVisible(outputGainSlider);
 
     outputGainLabel.setText("Output", juce::dontSendNotification);
@@ -303,13 +501,35 @@ void AuraAudioProcessorEditor::setupOutputControls()
     outputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), ParameterIDs::OUTPUT_GAIN, outputGainSlider);
 
-    // Linear Phase Button (noch nicht implementiert - als "coming soon" markiert)
+    // Phase Mode Combo (Minimum / Linear / Mixed)
+    phaseModeCombo.addItem("Min", 1);
+    phaseModeCombo.addItem("Linear", 2);
+    phaseModeCombo.addItem("Mixed", 3);
+    phaseModeCombo.setTooltip("Phase Mode\nMinimum = klassischer IIR-EQ mit geringster Latenz\nLinear = phasenlinear für transparentes Mastering\nMixed = tiefe Frequenzen minimum-phase, Höhen linear-phase\n\nÄltere Presets mit dem Legacy-Linear-Phase-Flag werden automatisch übernommen.");
+    phaseModeCombo.onChange = [this]()
+    {
+        if (phaseModeControlSyncInProgress_)
+            return;
+
+        auto& apvts = audioProcessor.getAPVTS();
+        const int phaseModeIndex = juce::jmax(0, phaseModeCombo.getSelectedId() - 1);
+
+        if (auto* phaseModeParam = apvts.getParameter(ParameterIDs::PHASE_MODE))
+            phaseModeParam->setValueNotifyingHost(phaseModeParam->convertTo0to1(static_cast<float>(phaseModeIndex)));
+
+        if (auto* legacyLinearParam = apvts.getParameter(ParameterIDs::LINEAR_PHASE_MODE))
+            legacyLinearParam->setValueNotifyingHost(phaseModeIndex == 1 ? 1.0f : 0.0f);
+
+        applyToolbarTabVisibility();
+        resized();
+    };
+    addAndMakeVisible(phaseModeCombo);
+
+    // Legacy-Linear-Phase-Proxy für alte Presets/Automationen unsichtbar weiterführen
     linearPhaseButton.setButtonText("Lin Phase");
     linearPhaseButton.setClickingTogglesState(true);
-    linearPhaseButton.setTooltip("Linear Phase Modus (Coming Soon)\nVerarbeitet das Signal ohne Phasenverschiebungen.\nIdeal fuer transparentes Mastering - erfordert FFT-basierte Verarbeitung.");
-    linearPhaseButton.setEnabled(false);  // Deaktiviert bis Implementierung fertig
-    linearPhaseButton.setAlpha(0.4f);
-    addAndMakeVisible(linearPhaseButton);
+    linearPhaseButton.setVisible(false);
+    addChildComponent(linearPhaseButton);
 
     linearPhaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), ParameterIDs::LINEAR_PHASE_MODE, linearPhaseButton);
@@ -317,7 +537,7 @@ void AuraAudioProcessorEditor::setupOutputControls()
     // Mid/Side Button
     midSideButton.setButtonText("M/S");
     midSideButton.setClickingTogglesState(true);
-    midSideButton.setTooltip("Mid/Side Modus\nAktiviert Mid/Side-Verarbeitung statt Stereo (L/R).\nMid = Mitte des Stereofeldes, Side = Seiten.\nErmoeglicht gezieltes EQ-ing von Mono- und Stereo-Anteilen.");
+    midSideButton.setTooltip("Mid/Side Mode\nEnables Mid/Side processing instead of Stereo (L/R).\nMid = center of stereo field, Side = sides.\nAllows targeted EQ of mono and stereo content.");
     addAndMakeVisible(midSideButton);
 
     auto& apvts = audioProcessor.getAPVTS();
@@ -331,17 +551,25 @@ void AuraAudioProcessorEditor::setupOutputControls()
 
     // Analyzer On/Off Button
     analyzerButton.setButtonText("Analyzer");
-    analyzerButton.setTooltip("Spektrum-Analyzer ein/ausschalten\nZeigt das Frequenzspektrum des Audio-Signals in Echtzeit an.");
+    analyzerButton.setTooltip("Spectrum Analyzer on/off\nDisplays the audio signal's frequency spectrum in real-time.");
     addAndMakeVisible(analyzerButton);
 
     analyzerOnAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), ParameterIDs::ANALYZER_ON, analyzerButton);
 
+    // Phase-Anzeige Button
+    phaseButton.setButtonText("Phase");
+    phaseButton.setTooltip("Phase Display on/off\nShows the phase shift of the EQ curve.");
+    addAndMakeVisible(phaseButton);
+    phaseButton.onClick = [this]() {
+        eqCurve.setShowPhase(phaseButton.getToggleState());
+    };
+
     // Analyzer Mode ComboBox
     analyzerModeCombo.addItem("Pre", 1);
     analyzerModeCombo.addItem("Post", 2);
     analyzerModeCombo.addItem("Both", 3);
-    analyzerModeCombo.setTooltip("Analyzer-Modus\nPre = Signal vor dem EQ\nPost = Signal nach dem EQ\nBoth = Beide gleichzeitig anzeigen");
+    analyzerModeCombo.setTooltip("Analyzer Mode\nPre = Signal before EQ\nPost = Signal after EQ\nBoth = Show both simultaneously");
     addAndMakeVisible(analyzerModeCombo);
 
     analyzerModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
@@ -358,13 +586,14 @@ void AuraAudioProcessorEditor::setupOutputControls()
     // Grab Mode Button
     grabModeButton.setButtonText("Grab");
     grabModeButton.setClickingTogglesState(true);
-    grabModeButton.setTooltip("Spectrum Grab Modus\nKlicke auf Spitzen im Spektrum um automatisch ein EQ-Band\nan dieser Frequenz mit passendem Gain und Q zu erstellen.");
+    grabModeButton.setTooltip("Spectrum Grab Mode\nClick on peaks in the spectrum to automatically create\nan EQ band at that frequency with matching gain and Q.");
     addAndMakeVisible(grabModeButton);
     
     grabModeButton.onClick = [this]()
     {
         bool isActive = grabModeButton.getToggleState();
         spectrumGrabTool.setGrabMode(isActive);
+        spectrumGrabTool.setVisible(isActive);
     };
     
     // Grab-Tool Callback: Band ueber APVTS erstellen (nicht direkt auf EQProcessor)
@@ -399,7 +628,8 @@ void AuraAudioProcessorEditor::setupOutputControls()
     wetDrySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
     wetDrySlider.setRange(0.0f, 100.0f, 1.0f);
     wetDrySlider.setValue(100.0f);
-    wetDrySlider.setTooltip("Wet/Dry Mix (Parallel Processing)\n100% = Nur das EQ-Signal hoeren\n0% = Nur das Originalsignal (Bypass)\nWerte dazwischen mischen Original und EQ-Signal.\nIdeal fuer subtile, parallele EQ-Bearbeitung.");
+    wetDrySlider.setDoubleClickReturnValue(true, 100.0f);
+    wetDrySlider.setTooltip("Wet/Dry Mix (Parallel Processing)\n100% = EQ signal only\n0% = Original signal only (bypass)\nValues in between blend original and EQ signal.\nDouble-click to reset to 100%.");
     addAndMakeVisible(wetDrySlider);
     
     wetDryLabel.setText("Mix", juce::dontSendNotification);
@@ -412,7 +642,7 @@ void AuraAudioProcessorEditor::setupOutputControls()
     // NEU: Delta-Modus Button
     deltaButton.setButtonText("Delta");
     deltaButton.setClickingTogglesState(true);
-    deltaButton.setTooltip("Delta Modus (Differenz-Signal)\nSpielt nur den Unterschied zwischen Original und EQ-Signal ab.\nSo hoerst du exakt, was der EQ veraendert.\nPerfekt zum Aufspueren von Resonanzen und Problemen.");
+    deltaButton.setTooltip("Delta Mode (Difference Signal)\nPlays only the difference between original and EQ signal.\nLets you hear exactly what the EQ is changing.\nPerfect for finding resonances and problems.");
     deltaButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffdd6633));
     addAndMakeVisible(deltaButton);
     
@@ -423,16 +653,47 @@ void AuraAudioProcessorEditor::setupOutputControls()
     oversamplingCombo.addItem("OS: Off", 1);
     oversamplingCombo.addItem("OS: 2x", 2);
     oversamplingCombo.addItem("OS: 4x", 3);
-    oversamplingCombo.setTooltip("Oversampling-Faktor\nOff = Kein Oversampling (niedrigste CPU-Last)\n2x = Doppelte Samplerate (gute Qualitaet)\n4x = Vierfache Samplerate (beste Qualitaet)\n\nReduziert Aliasing-Artefakte bei hohen Frequenzen.\nHoehere Werte = bessere Klangqualitaet, aber mehr CPU-Last.");
+    oversamplingCombo.setTooltip("Oversampling Factor\nOff = No oversampling (lowest CPU)\n2x = Double sample rate (good quality)\n4x = Quadruple sample rate (best quality)\n\nReduces aliasing artifacts at high frequencies.\nHigher values = better quality, but more CPU.");
     addAndMakeVisible(oversamplingCombo);
     
     oversamplingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), ParameterIDs::OVERSAMPLING_FACTOR, oversamplingCombo);
+
+    // EQ Quality Combo (Nyquist-Matched / Standard)
+    eqQualityCombo.addItem("Std", 1);
+    eqQualityCombo.addItem("HQ", 2);
+    eqQualityCombo.setTooltip("EQ Quality\nStd = klassische IIR-Koeffizienten\nHQ = Nyquist-Matched-Transform für präzisere Höhen und saubere Top-End-Formen\n\nVor allem bei aggressiven High-Shelf- und Cut-Settings hörbar sinnvoll.");
+    addAndMakeVisible(eqQualityCombo);
+
+    eqQualityAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getAPVTS(), ParameterIDs::EQ_QUALITY, eqQualityCombo);
+
+    // Character Mode Combo (harmonic coloration)
+    characterModeCombo.addItem("Char: Off", 1);
+    characterModeCombo.addItem("Char: Subtle", 2);
+    characterModeCombo.addItem("Char: Warm", 3);
+    characterModeCombo.setTooltip("Character Mode\nOff = neutral\nSubtle = leichte harmonische Verdichtung\nWarm = staerkere, musikalische Saettigung\n\nEignet sich gut fuer Tone-Shaping nach der EQ-Kurve.");
+    addAndMakeVisible(characterModeCombo);
+
+    characterModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getAPVTS(), ParameterIDs::CHARACTER_MODE, characterModeCombo);
+
+    // Mixed-Phase Crossover (nur relevant im Mixed-Phase-Modus)
+    phaseCrossoverSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    phaseCrossoverSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 58, 18);
+    phaseCrossoverSlider.setRange(200.0f, 5000.0f, 1.0f);
+    phaseCrossoverSlider.setSkewFactorFromMidPoint(700.0f);
+    phaseCrossoverSlider.setTooltip("Mixed-Phase Crossover\nSetzt die Trennfrequenz fuer den Mixed-Mode:\nunterhalb eher Minimum-Phase, oberhalb eher Linear-Phase.\n\nNur im Mixed-Phase-Modus relevant.");
+    phaseCrossoverSlider.setTextValueSuffix(" Hz");
+    addAndMakeVisible(phaseCrossoverSlider);
+
+    phaseCrossoverAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), ParameterIDs::PHASE_CROSSOVER, phaseCrossoverSlider);
     
     // NEU: Resonance Suppressor Button
-    suppressorButton.setButtonText("Soothe");
+    suppressorButton.setButtonText("Suppress");
     suppressorButton.setClickingTogglesState(true);
-    suppressorButton.setTooltip("Resonance Suppressor (Soothe-aehnlich)\nErkennt und unterdrueckt automatisch stoerende Resonanzen\nim Frequenzspektrum. Arbeitet dynamisch in 16 Baendern.\n\nIdeal gegen harsche Vocals, nervige Raumresonanzen\noder unangenehme Spitzen in Instrumenten.");
+    suppressorButton.setTooltip("Resonance Suppressor\nAutomatically detects and suppresses resonances\nin the frequency spectrum using 16 dynamic bands.\n\nIdeal for harsh vocals, room resonances,\nor annoying peaks in instruments.");
     suppressorButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff8844cc));
     addAndMakeVisible(suppressorButton);
     
@@ -442,38 +703,315 @@ void AuraAudioProcessorEditor::setupOutputControls()
     // NEU: Piano Roll Overlay
     addAndMakeVisible(pianoRollOverlay);
     pianoRollOverlay.setEnabled(false);
+    pianoRollOverlay.setVisible(false);
     
     pianoRollButton.setButtonText("Notes");
     pianoRollButton.setClickingTogglesState(true);
-    pianoRollButton.setTooltip("Piano Roll / Noten-Overlay\nBlendet musikalische Noten (C0-C10) ueber dem Analyzer ein.\nHilft dabei, EQ-Einstellungen auf bestimmte Toene\nund Instrumente abzustimmen.");
+    pianoRollButton.setTooltip("Piano Roll / Note Overlay\nDisplays musical notes (C0-C10) over the analyzer.\nHelps align EQ settings to specific notes and instruments.");
     pianoRollButton.onClick = [this]()
     {
-        pianoRollOverlay.setEnabled(pianoRollButton.getToggleState());
+        bool enabled = pianoRollButton.getToggleState();
+        pianoRollOverlay.setEnabled(enabled);
+        pianoRollOverlay.setVisible(enabled);
     };
     addAndMakeVisible(pianoRollButton);
+    
+    // ===== v2.0: Neue Panel-Buttons =====
+    spectralDynButton.setButtonText("Spectral");
+    spectralDynButton.setClickingTogglesState(true);
+    spectralDynButton.setTooltip("Spectral Dynamics\nPer-frequency dynamic processing\n(Compress/Expand/Gate per band)");
+    spectralDynButton.onClick = [this]()
+    {
+        showSpectralDynPanel = spectralDynButton.getToggleState();
+        if (showSpectralDynPanel && spectralDynamicsPanel == nullptr)
+        {
+            spectralDynamicsPanel = std::make_unique<SpectralDynamicsPanel>(
+                audioProcessor.getSpectralDynamics());
+            addAndMakeVisible(*spectralDynamicsPanel);
+        }
+        if (spectralDynamicsPanel)
+            spectralDynamicsPanel->setVisible(showSpectralDynPanel);
+        resized();
+    };
+    addAndMakeVisible(spectralDynButton);
+    
+    crossChannelButton.setButtonText("Cross-Ch");
+    crossChannelButton.setClickingTogglesState(true);
+    crossChannelButton.setTooltip("Cross-Channel Analysis\nShows frequency collisions with other Aura instances\nand suggests automatic corrections.");
+    crossChannelButton.onClick = [this]()
+    {
+        showCrossChannelPanel = crossChannelButton.getToggleState();
+        if (showCrossChannelPanel && crossChannelPanel == nullptr)
+        {
+            crossChannelPanel = std::make_unique<CrossChannelPanel>(
+                audioProcessor.getCrossChannel());
+            addAndMakeVisible(*crossChannelPanel);
+        }
+        if (crossChannelPanel)
+            crossChannelPanel->setVisible(showCrossChannelPanel);
+        resized();
+    };
+    addAndMakeVisible(crossChannelButton);
+    
+    eqSketchButton.setButtonText("Sketch");
+    eqSketchButton.setClickingTogglesState(true);
+    eqSketchButton.setTooltip("EQ Sketch\nDraw a freehand EQ curve that automatically\ngets converted into EQ bands.");
+    eqSketchButton.onClick = [this]()
+    {
+        bool active = eqSketchButton.getToggleState();
+        eqCurve.setSketchMode(active);
+        if (!active)
+            audioProcessor.getEQSketchTool().clearSketch();
+        repaint();
+    };
+    addAndMakeVisible(eqSketchButton);
+    
+    // v2.0: Genre Morph Button
+    genreMorphButton.setButtonText("Morph");
+    genreMorphButton.setClickingTogglesState(true);
+    genreMorphButton.setTooltip("Genre Morph\n2D XY-Pad for morphing between genre profiles.\nDrag the point to interpolate the EQ character\nbetween different genres.");
+    genreMorphButton.onClick = [this]()
+    {
+        showGenreMorphPanel = genreMorphButton.getToggleState();
+        if (showGenreMorphPanel && genreMorphWidget == nullptr)
+        {
+            genreMorphWidget = std::make_unique<GenreMorphWidget>(
+                audioProcessor.getGenreMorphSlider());
+            addAndMakeVisible(*genreMorphWidget);
+        }
+        if (genreMorphWidget)
+            genreMorphWidget->setVisible(showGenreMorphPanel);
+        resized();
+    };
+    addAndMakeVisible(genreMorphButton);
+    
+    // v2.0: Multi-Reference Button
+    multiRefButton.setButtonText("Multi-Ref");
+    multiRefButton.setClickingTogglesState(true);
+    multiRefButton.setTooltip("Multi-Reference\nManage up to 8 reference tracks simultaneously.\nWeight and combine multiple references\nfor more precise spectral matching.");
+    multiRefButton.onClick = [this]()
+    {
+        showMultiRefPanel = multiRefButton.getToggleState();
+        if (showMultiRefPanel && multiRefPanel == nullptr)
+        {
+            multiRefPanel = std::make_unique<MultiReferencePanel>(
+                audioProcessor.getMultiReferenceManager());
+            addAndMakeVisible(*multiRefPanel);
+        }
+        if (multiRefPanel)
+            multiRefPanel->setVisible(showMultiRefPanel);
+        resized();
+    };
+    addAndMakeVisible(multiRefButton);
+    
+    // v2.0: Tutorial / Lernmodus Button
+    tutorialButton.setButtonText("Learn");
+    tutorialButton.setClickingTogglesState(true);
+    tutorialButton.setTooltip("Tutorial / Learning Mode\nInteractive guide that walks you through\nthe most important features step by step.\n3 paths: Basics, Smart EQ, Mastering.");
+    tutorialButton.onClick = [this]()
+    {
+        showTutorialOverlay = tutorialButton.getToggleState();
+        if (showTutorialOverlay)
+        {
+            tutorialOverlayPanel.setVisible(true);
+            tutorialOverlayPanel.startTutorial(0);  // Basics
+            tutorialOverlayPanel.toFront(false);
+        }
+        else
+        {
+            tutorialOverlayPanel.endTutorial();
+            tutorialOverlayPanel.setVisible(false);
+        }
+    };
+    addAndMakeVisible(tutorialButton);
+    
+    // Tutorial Overlay (liegt über allem)
+    addChildComponent(tutorialOverlayPanel);
+    tutorialOverlayPanel.onTutorialEnded = [this]()
+    {
+        showTutorialOverlay = false;
+        tutorialButton.setToggleState(false, juce::dontSendNotification);
+        tutorialOverlayPanel.setVisible(false);
+    };
 }
 
 void AuraAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(CustomLookAndFeel::getBackgroundDark());
+    // ===== Subtiler Hintergrund-Gradient (Premium-Effekt) =====
+    {
+        auto bgDark = CustomLookAndFeel::getBackgroundDark();
+        juce::ColourGradient bgGradient(
+            bgDark.brighter(0.06f), 0, 0,
+            bgDark.darker(0.05f), 0, static_cast<float>(getHeight()),
+            false);
+        g.setGradientFill(bgGradient);
+        g.fillRect(getLocalBounds());
+    }
 
-    // Header-Bereich: 2 Zeilen (90 Pixel gesamt)
-    g.setColour(CustomLookAndFeel::getBackgroundMid());
-    g.fillRect(0, 0, getWidth(), 90);
+    // Header-Bereich: 2 Zeilen (90 Pixel gesamt) mit Gradient
+    {
+        auto headerTop = CustomLookAndFeel::getBackgroundMid().brighter(0.04f);
+        auto headerBot = CustomLookAndFeel::getBackgroundMid().darker(0.03f);
+        juce::ColourGradient headerGrad(headerTop, 0, 0, headerBot, 0, 90.0f, false);
+        g.setGradientFill(headerGrad);
+        g.fillRect(0, 0, getWidth(), 90);
+    }
     
-    // Trennlinie zwischen Zeile 1 und 2
-    g.setColour(CustomLookAndFeel::getBackgroundDark().withAlpha(0.5f));
+    // Trennlinie zwischen Zeile 1 und 2 (subtiler Schatten-Effekt)
+    g.setColour(CustomLookAndFeel::getBackgroundDark().withAlpha(0.6f));
     g.fillRect(0, 55, getWidth(), 1);
+    g.setColour(CustomLookAndFeel::getBackgroundLight().withAlpha(0.08f));
+    g.fillRect(0, 56, getWidth(), 1);
 
-    // Plugin-Name
-    g.setColour(CustomLookAndFeel::getTextColor());
-    g.setFont(juce::Font(juce::FontOptions(20.0f).withStyle("Bold")));
-    g.drawText("Aura", 15, 8, 100, 24, juce::Justification::left);
+    // Untere Kante des Headers: Highlight-Linie
+    g.setColour(CustomLookAndFeel::getBackgroundDark().withAlpha(0.7f));
+    g.fillRect(0, 89, getWidth(), 1);
+    g.setColour(CustomLookAndFeel::getBackgroundLight().withAlpha(0.06f));
+    g.fillRect(0, 90, getWidth(), 1);
+
+    // Plugin-Name mit Glow
+    {
+        auto nameColor = CustomLookAndFeel::getTextColor();
+        g.setFont(juce::Font(juce::FontOptions(20.0f).withStyle("Bold")));
+        // Subtiler Glow hinter dem Text
+        g.setColour(CustomLookAndFeel::getAccentColor().withAlpha(0.08f));
+        g.drawText("Aura", 14, 7, 102, 26, juce::Justification::left);
+        g.setColour(nameColor);
+        g.drawText("Aura", 15, 8, 100, 24, juce::Justification::left);
+    }
 
     // Version
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
-    g.setColour(CustomLookAndFeel::getTextColor().withAlpha(0.5f));
-    g.drawText("v1.0", 115, 13, 40, 16, juce::Justification::left);
+    g.setColour(CustomLookAndFeel::getTextColor().withAlpha(0.45f));
+    g.drawText("v2.0", 75, 14, 35, 14, juce::Justification::left);
+
+    // ===== Aktiver Tab-Unterstrich (Accent-Color Glow-Linie) =====
+    {
+        juce::Component* activeTab = nullptr;
+        if (processingTabButton.getToggleState()) activeTab = &processingTabButton;
+        else if (smartTabButton.getToggleState()) activeTab = &smartTabButton;
+        else if (analyzerTabButton.getToggleState()) activeTab = &analyzerTabButton;
+        
+        if (activeTab != nullptr)
+        {
+            auto tabBounds = activeTab->getBounds();
+            auto accent = CustomLookAndFeel::getAccentColor();
+            int lineY = tabBounds.getBottom() + 1;
+            int lineX = tabBounds.getX() + 4;
+            int lineW = tabBounds.getWidth() - 8;
+            
+            // Äußerer Glow (breiter, transparent)
+            g.setColour(accent.withAlpha(0.15f));
+            g.fillRoundedRectangle(static_cast<float>(lineX - 2), static_cast<float>(lineY - 1),
+                                    static_cast<float>(lineW + 4), 4.0f, 2.0f);
+            // Innere Linie (scharf)
+            g.setColour(accent.withAlpha(0.8f));
+            g.fillRoundedRectangle(static_cast<float>(lineX), static_cast<float>(lineY),
+                                    static_cast<float>(lineW), 2.0f, 1.0f);
+        }
+    }
+
+    // ===== Toolbar-Separatoren zwischen Button-Gruppen =====
+    {
+        auto sepColor = CustomLookAndFeel::getTextColor().withAlpha(0.1f);
+        g.setColour(sepColor);
+        
+        // Separator nach Tabs (vor den Buttons)
+        auto tabEnd = analyzerTabButton.getBounds().getRight() + 4;
+        if (tabEnd > 0)
+            g.fillRect(tabEnd, 60, 1, 26);
+    }
+
+    // ===== Unterer Settings-Bereich: 2-zeilig (modern & kompakt) =====
+    const int dynBandH = juce::jlimit(72, 108, getHeight() * 12 / 100);
+    const int settingsAreaH = 50;
+    const int meterWidth = 55;
+    const int bottomY = getHeight() - settingsAreaH - dynBandH - 24;
+
+    // Hintergrund für den Settings-Bereich mit Gradient
+    {
+        auto settingsTop = CustomLookAndFeel::getBackgroundMid().withAlpha(0.55f);
+        auto settingsBot = CustomLookAndFeel::getBackgroundMid().withAlpha(0.4f);
+        juce::ColourGradient settingsGrad(settingsTop, 0, static_cast<float>(bottomY),
+                                           settingsBot, 0, static_cast<float>(bottomY + settingsAreaH), false);
+        g.setGradientFill(settingsGrad);
+        g.fillRect(0, bottomY, getWidth() - meterWidth, settingsAreaH);
+    }
+
+    // Obere Kante: Highlight-Linie
+    g.setColour(CustomLookAndFeel::getBackgroundLight().withAlpha(0.08f));
+    g.fillRect(0, bottomY, getWidth() - meterWidth, 1);
+
+    // Trennlinie zwischen Zeile 1 und 2 (kompakter)
+    g.setColour(CustomLookAndFeel::getBackgroundDark().withAlpha(0.3f));
+    g.fillRect(8, bottomY + 24, getWidth() - meterWidth - 16, 1);
+
+    // ===== Section Labels im unteren Bereich =====
+    {
+        auto labelColor = CustomLookAndFeel::getTextColor().withAlpha(0.45f);
+        g.setColour(labelColor);
+        g.setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));
+
+        // Zeile 1 rechts: "ANALYZER"
+        int labelRightX = getWidth() - meterWidth - 140;
+        g.drawText("ANALYZER", labelRightX, bottomY + 2, 60, 10, juce::Justification::centred);
+
+        // Zeile 2: Separator zwischen Display- und Panel-Toggles
+        int settRow2Left = 5;
+        int sepPanelX = settRow2Left + 72 + 4 + 68 + 3;
+        g.setColour(CustomLookAndFeel::getTextColor().withAlpha(0.1f));
+        g.fillRect(sepPanelX, bottomY + 28, 1, 18);
+    }
+
+    // ===== Moderne Card-Layer für bessere visuelle Hierarchie =====
+    {
+        const int cardDynBandH = juce::jlimit(72, 108, getHeight() * 12 / 100);
+        const int cardSettingsAreaH = 50;
+        const int cardMeterWidth = 55;
+        const int mainTop = 95;
+        const int mainBottom = getHeight() - cardSettingsAreaH - cardDynBandH - 28;
+        const int mainHeight = juce::jmax(120, mainBottom - mainTop);
+
+        auto contentCard = juce::Rectangle<float>(6.0f, static_cast<float>(mainTop),
+                                                  static_cast<float>(getWidth() - cardMeterWidth - 14),
+                                                  static_cast<float>(mainHeight));
+
+        // Card-Schatten
+        g.setColour(juce::Colours::black.withAlpha(0.22f));
+        g.fillRoundedRectangle(contentCard.translated(0.0f, 1.6f), 9.0f);
+
+        // Card-Fläche mit leichtem Vertical-Gradient
+        juce::ColourGradient cardGrad(
+            CustomLookAndFeel::getBackgroundMid().withAlpha(0.17f), contentCard.getX(), contentCard.getY(),
+            CustomLookAndFeel::getBackgroundDark().withAlpha(0.11f), contentCard.getX(), contentCard.getBottom(),
+            false);
+        g.setGradientFill(cardGrad);
+        g.fillRoundedRectangle(contentCard, 9.0f);
+
+        // Card-Border
+        g.setColour(CustomLookAndFeel::getTextColor().withAlpha(0.07f));
+        g.drawRoundedRectangle(contentCard.reduced(0.5f), 9.0f, 0.9f);
+
+        // Analyzer-Settings als eigene „Toolbar Card“
+        auto settingsCard = juce::Rectangle<float>(6.0f,
+                                                   static_cast<float>(getHeight() - cardSettingsAreaH - cardDynBandH - 24),
+                                                   static_cast<float>(getWidth() - cardMeterWidth - 14),
+                                                   static_cast<float>(cardSettingsAreaH));
+        g.setColour(CustomLookAndFeel::getBackgroundLight().withAlpha(0.07f));
+        g.fillRoundedRectangle(settingsCard, 8.0f);
+        g.setColour(CustomLookAndFeel::getTextColor().withAlpha(0.08f));
+        g.drawRoundedRectangle(settingsCard.reduced(0.5f), 8.0f, 0.8f);
+
+        // Band-Control-Bereich subtil abheben
+        auto bandCard = juce::Rectangle<float>(6.0f,
+                                               static_cast<float>(getHeight() - cardDynBandH - 24),
+                                               static_cast<float>(getWidth() - cardMeterWidth - 14),
+                                               static_cast<float>(cardDynBandH));
+        g.setColour(CustomLookAndFeel::getBackgroundLight().withAlpha(0.05f));
+        g.fillRoundedRectangle(bandCard, 10.0f);
+        g.setColour(CustomLookAndFeel::getTextColor().withAlpha(0.06f));
+        g.drawRoundedRectangle(bandCard.reduced(0.5f), 10.0f, 0.8f);
+    }
 }
 
 void AuraAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
@@ -492,16 +1030,159 @@ bool AuraAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
 {
     auto& um = audioProcessor.getUndoManager();
 
+    // Undo: Ctrl+Z
     if (key == juce::KeyPress('z', juce::ModifierKeys::ctrlModifier, 0))
     {
         um.undo();
         return true;
     }
+    // Redo: Ctrl+Y oder Ctrl+Shift+Z
     if (key == juce::KeyPress('y', juce::ModifierKeys::ctrlModifier, 0) ||
         key == juce::KeyPress('z', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier, 0))
     {
         um.redo();
         return true;
+    }
+    // Delete/Backspace: Ausgewähltes Band löschen
+    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
+    {
+        int sel = eqCurve.getSelectedBand();
+        if (sel >= 0)
+        {
+            eqCurve.deleteBand(sel);
+            return true;
+        }
+    }
+    // Space: Bypass des ausgewählten Bands umschalten
+    if (key == juce::KeyPress::spaceKey)
+    {
+        int sel = eqCurve.getSelectedBand();
+        if (sel >= 0)
+        {
+            auto* bypassParam = audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandBypassID(sel));
+            if (bypassParam != nullptr)
+            {
+                bool current = bypassParam->getValue() > 0.5f;
+                bypassParam->setValueNotifyingHost(current ? 0.0f : 1.0f);
+                return true;
+            }
+        }
+    }
+    // Ctrl+S: User-Preset speichern
+    if (key == juce::KeyPress('s', juce::ModifierKeys::ctrlModifier, 0))
+    {
+        presetComponent.triggerSavePreset();
+        return true;
+    }
+    // Ctrl+C: Ausgewähltes Band kopieren
+    if (key == juce::KeyPress('c', juce::ModifierKeys::ctrlModifier, 0))
+    {
+        int sel = eqCurve.getSelectedBand();
+        if (sel >= 0)
+        {
+            audioProcessor.getEQProcessor().copyBandSettings(sel);
+            return true;
+        }
+    }
+    // Ctrl+V: Band-Settings einfügen
+    if (key == juce::KeyPress('v', juce::ModifierKeys::ctrlModifier, 0))
+    {
+        int sel = eqCurve.getSelectedBand();
+        if (sel >= 0)
+        {
+            audioProcessor.getEQProcessor().pasteBandSettings(sel);
+            // APVTS-Parameter synchronisieren
+            const auto& band = audioProcessor.getEQProcessor().getBand(sel);
+            auto& apvts = audioProcessor.getAPVTS();
+            if (auto* p = apvts.getParameter(ParameterIDs::getBandFreqID(sel)))
+                p->setValueNotifyingHost(p->convertTo0to1(band.getFrequency()));
+            if (auto* p = apvts.getParameter(ParameterIDs::getBandGainID(sel)))
+                p->setValueNotifyingHost(p->convertTo0to1(band.getGain()));
+            if (auto* p = apvts.getParameter(ParameterIDs::getBandQID(sel)))
+                p->setValueNotifyingHost(p->convertTo0to1(band.getQ()));
+            return true;
+        }
+    }
+    // Escape: Band-Selektion aufheben
+    if (key == juce::KeyPress::escapeKey)
+    {
+        if (eqCurve.getSelectedBand() >= 0)
+        {
+            eqCurve.setSelectedBand(-1);
+            return true;
+        }
+    }
+    // Tab / Shift+Tab: Nächstes / Vorheriges aktives Band selektieren
+    if (key == juce::KeyPress::tabKey)
+    {
+        int sel = eqCurve.getSelectedBand();
+        int dir = key.getModifiers().isShiftDown() ? -1 : 1;
+        // Suche nächstes aktives Band
+        for (int attempt = 0; attempt < ParameterIDs::MAX_BANDS; ++attempt)
+        {
+            sel = ((sel + dir) % ParameterIDs::MAX_BANDS + ParameterIDs::MAX_BANDS) % ParameterIDs::MAX_BANDS;
+            auto* activeParam = audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandActiveID(sel));
+            if (activeParam != nullptr && activeParam->getValue() > 0.5f)
+            {
+                eqCurve.setSelectedBand(sel);
+                return true;
+            }
+        }
+        return true;
+    }
+    // Pfeiltasten: Gain / Frequenz des selektierten Bands ändern
+    {
+        int sel = eqCurve.getSelectedBand();
+        if (sel >= 0)
+        {
+            float gainStep = key.getModifiers().isShiftDown() ? 0.1f : 0.5f;
+            float freqFactor = key.getModifiers().isShiftDown() ? 1.01f : 1.05f;
+
+            if (key == juce::KeyPress::upKey || key == juce::KeyPress(juce::KeyPress::upKey, juce::ModifierKeys::shiftModifier, 0))
+            {
+                auto* gainParam = audioProcessor.getAPVTS().getRawParameterValue(ParameterIDs::getBandGainID(sel));
+                if (gainParam != nullptr)
+                {
+                    float newGain = juce::jlimit(-30.0f, 30.0f, gainParam->load() + gainStep);
+                    audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandGainID(sel))->setValueNotifyingHost(
+                        audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandGainID(sel))->convertTo0to1(newGain));
+                }
+                return true;
+            }
+            if (key == juce::KeyPress::downKey || key == juce::KeyPress(juce::KeyPress::downKey, juce::ModifierKeys::shiftModifier, 0))
+            {
+                auto* gainParam = audioProcessor.getAPVTS().getRawParameterValue(ParameterIDs::getBandGainID(sel));
+                if (gainParam != nullptr)
+                {
+                    float newGain = juce::jlimit(-30.0f, 30.0f, gainParam->load() - gainStep);
+                    audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandGainID(sel))->setValueNotifyingHost(
+                        audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandGainID(sel))->convertTo0to1(newGain));
+                }
+                return true;
+            }
+            if (key == juce::KeyPress::rightKey || key == juce::KeyPress(juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier, 0))
+            {
+                auto* freqParam = audioProcessor.getAPVTS().getRawParameterValue(ParameterIDs::getBandFreqID(sel));
+                if (freqParam != nullptr)
+                {
+                    float newFreq = juce::jlimit(20.0f, 20000.0f, freqParam->load() * freqFactor);
+                    audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandFreqID(sel))->setValueNotifyingHost(
+                        audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandFreqID(sel))->convertTo0to1(newFreq));
+                }
+                return true;
+            }
+            if (key == juce::KeyPress::leftKey || key == juce::KeyPress(juce::KeyPress::leftKey, juce::ModifierKeys::shiftModifier, 0))
+            {
+                auto* freqParam = audioProcessor.getAPVTS().getRawParameterValue(ParameterIDs::getBandFreqID(sel));
+                if (freqParam != nullptr)
+                {
+                    float newFreq = juce::jlimit(20.0f, 20000.0f, freqParam->load() / freqFactor);
+                    audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandFreqID(sel))->setValueNotifyingHost(
+                        audioProcessor.getAPVTS().getParameter(ParameterIDs::getBandFreqID(sel))->convertTo0to1(newFreq));
+                }
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -510,6 +1191,8 @@ void AuraAudioProcessorEditor::resized()
 {
     // Undo/Redo mit Ctrl+Z / Ctrl+Y
     setWantsKeyboardFocus(true);
+
+    applyToolbarTabVisibility();
     
     // Speichere aktuelle Fenstergröße (mit Debounce um Disk-I/O zu reduzieren)
     pendingSaveWidth = getWidth();
@@ -518,6 +1201,14 @@ void AuraAudioProcessorEditor::resized()
         saveWindowSizeTimer.startTimer(500);  // 500ms Debounce
     
     auto bounds = getLocalBounds();
+
+    // Adaptive Density: kompakter bei schmalen Fenstern, komfortabel bei breiten Layouts
+    const int windowWidth = bounds.getWidth();
+    const bool compactDensity = (windowWidth < 1320);
+    const auto densityValue = [compactDensity](int compactValue, int comfortableValue)
+    {
+        return compactDensity ? compactValue : comfortableValue;
+    };
     
     // Schutz: Wenn Bounds zu klein, nicht layouten
     if (bounds.getWidth() < 100 || bounds.getHeight() < 100)
@@ -534,15 +1225,29 @@ void AuraAudioProcessorEditor::resized()
     // === ZEILE 1 (55px): Presets | Gain-Knobs | Lizenz/Theme ===
     auto row1 = fullHeaderArea.removeFromTop(55);
     
-    // Preset-Component links
+    // Preset-Component links + Reset-Button
     presetComponent.setBounds(row1.removeFromLeft(250).reduced(5));
+    resetButton.setBounds(row1.removeFromLeft(58).reduced(2, 12));
     
-    // Lizenz-Button + SysAudio + Update-Banner + Theme Selector (oben rechts)
-    auto rightRow1 = row1.removeFromRight(updateBanner.isVisible() ? 530 : 350).reduced(5, 8);
+    // Lizenz-Button + SysAudio + Output-Routing + Update-Banner + Theme Selector (oben rechts)
+    bool sysOutputVisible = sysAudioOutputCombo.isVisible();
+    int rightWidth = 415 + (updateBanner.isVisible() ? 180 : 0) + (sysOutputVisible ? 230 : 0);
+    auto rightRow1 = row1.removeFromRight(rightWidth).reduced(5, 8);
     licenseButton.setBounds(rightRow1.removeFromLeft(55));
     rightRow1.removeFromLeft(5);
+    settingsButton.setBounds(rightRow1.removeFromLeft(60));
+    rightRow1.removeFromLeft(5);
     systemAudioButton.setBounds(rightRow1.removeFromLeft(70));
-    rightRow1.removeFromLeft(8);
+    rightRow1.removeFromLeft(4);
+    
+    // Output-Routing ComboBox (nur sichtbar wenn Sys Audio aktiv)
+    if (sysOutputVisible)
+    {
+        sysAudioOutputLabel.setBounds(rightRow1.removeFromLeft(50));
+        rightRow1.removeFromLeft(2);
+        sysAudioOutputCombo.setBounds(rightRow1.removeFromLeft(170));
+        rightRow1.removeFromLeft(8);
+    }
     
     // Update-Banner neben SysAudio (wenn sichtbar)
     if (updateBanner.isVisible())
@@ -570,90 +1275,122 @@ void AuraAudioProcessorEditor::resized()
     wetDrySlider.setBounds(wetDryArea);
     
     // === ZEILE 2 (35px): Toolbar mit allen Buttons ===
-    auto row2 = fullHeaderArea.reduced(8, 2);
-    const int gap = 6;  // Abstand zwischen Buttons
-    
-    // Links: Processing-Buttons
-    undoButton.setBounds(row2.removeFromLeft(28).reduced(0, 2));
-    row2.removeFromLeft(2);
-    redoButton.setBounds(row2.removeFromLeft(28).reduced(0, 2));
-    row2.removeFromLeft(gap);
-    
-    resetButton.setBounds(row2.removeFromLeft(50).reduced(0, 2));
-    row2.removeFromLeft(gap);
-    
-    oversamplingCombo.setBounds(row2.removeFromLeft(72).reduced(0, 2));
-    row2.removeFromLeft(gap);
-    
-    deltaButton.setBounds(row2.removeFromLeft(58).reduced(0, 2));
-    row2.removeFromLeft(gap);
-    
-    suppressorButton.setBounds(row2.removeFromLeft(62).reduced(0, 2));
-    row2.removeFromLeft(gap);
-    
-    smartModeButton.setBounds(row2.removeFromLeft(78).reduced(0, 2));
-    row2.removeFromLeft(gap);
-    
-    referenceButton.setBounds(row2.removeFromLeft(42).reduced(0, 2));
-    row2.removeFromLeft(gap);
-    
-    grabModeButton.setBounds(row2.removeFromLeft(52).reduced(0, 2));
-    row2.removeFromLeft(gap + 4);  // Trennung zwischen Features und Analyzer
-    
-    // Rechts: Analyzer-Buttons (von rechts nach links platziert)
-    linearPhaseButton.setBounds(row2.removeFromRight(90).reduced(0, 2));
-    row2.removeFromRight(gap);
-    
-    midSideButton.setBounds(row2.removeFromRight(58).reduced(0, 2));
-    row2.removeFromRight(gap);
-    
-    analyzerButton.setBounds(row2.removeFromRight(76).reduced(0, 2));
-    row2.removeFromRight(gap);
-    
-    analyzerModeCombo.setBounds(row2.removeFromRight(70).reduced(0, 2));
+    auto row2 = fullHeaderArea.reduced(densityValue(6, 8), 2);
+    const int gap = densityValue(4, 6);
+
+    // Tabs links
+    auto tabArea = row2.removeFromLeft(densityValue(232, 268));
+    processingTabButton.setBounds(tabArea.removeFromLeft(densityValue(82, 94)).reduced(0, 2));
+    tabArea.removeFromLeft(densityValue(4, 6));
+    smartTabButton.setBounds(tabArea.removeFromLeft(densityValue(64, 74)).reduced(0, 2));
+    tabArea.removeFromLeft(densityValue(4, 6));
+    analyzerTabButton.setBounds(tabArea.removeFromLeft(densityValue(74, 84)).reduced(0, 2));
+    row2.removeFromLeft(densityValue(6, 9));
+
+    auto placeLeft = [&](juce::Component& c, int width)
+    {
+        if (!c.isVisible())
+            return;
+        const int placeWidth = juce::jmin(width, row2.getWidth());
+        if (placeWidth <= 0)
+            return;
+        c.setBounds(row2.removeFromLeft(placeWidth).reduced(0, 2));
+        row2.removeFromLeft(juce::jmin(gap, row2.getWidth()));
+    };
+
+    // Processing Tab
+    placeLeft(undoButton, densityValue(28, 32));
+    placeLeft(redoButton, densityValue(28, 32));
+    placeLeft(oversamplingCombo, densityValue(84, 96));
+    placeLeft(eqQualityCombo, densityValue(58, 66));
+    placeLeft(characterModeCombo, densityValue(96, 116));
+    placeLeft(phaseModeCombo, densityValue(84, 96));
+    placeLeft(phaseCrossoverSlider, densityValue(128, 148));
+    placeLeft(deltaButton, densityValue(62, 72));
+    placeLeft(suppressorButton, densityValue(78, 90));
+
+    // Smart Tab
+    placeLeft(smartModeButton, densityValue(86, 96));
+    placeLeft(referenceButton, densityValue(62, 72));
+    placeLeft(grabModeButton, densityValue(62, 72));
+    placeLeft(eqSketchButton, densityValue(66, 76));
+    placeLeft(spectralDynButton, densityValue(74, 86));
+    placeLeft(crossChannelButton, densityValue(74, 86));
+    placeLeft(genreMorphButton, densityValue(66, 76));
+    placeLeft(multiRefButton, densityValue(82, 94));
+    placeLeft(tutorialButton, densityValue(66, 76));
+    placeLeft(webSearchButton, densityValue(62, 72));
+
+    // Analyzer Tab
+    placeLeft(analyzerModeCombo, densityValue(78, 90));
+    placeLeft(analyzerButton, densityValue(76, 88));
+    placeLeft(phaseButton, densityValue(62, 72));
+    placeLeft(midSideButton, densityValue(62, 72));
 
     // ==========================================
-    // Analyzer-Settings Panel (Pro-Q Style)
+    // Analyzer-Settings Panel — 2 schlanke Zeilen (modern)
     // ==========================================
-    auto analyzerSettingsArea = bounds.removeFromBottom(35);
-    auto settingsRow = analyzerSettingsArea.reduced(5, 3);
+    auto analyzerSettingsArea = bounds.removeFromBottom(50);  // 2 Zeilen à 22px + 6px Padding
 
-    // Von links nach rechts: Resolution, Range, Speed, EQ Scale, Tilt, Freeze, Peaks
-    analyzerResolutionCombo.setBounds(settingsRow.removeFromLeft(110));
-    settingsRow.removeFromLeft(8);
+    // --- Zeile 1: Analyzer-Controls ---
+    auto settingsRow1 = analyzerSettingsArea.removeFromTop(22).reduced(5, 1);
+    const int gap1 = 5;
 
-    analyzerRangeCombo.setBounds(settingsRow.removeFromLeft(80));
-    settingsRow.removeFromLeft(8);
+    analyzerResolutionCombo.setBounds(settingsRow1.removeFromLeft(105));
+    settingsRow1.removeFromLeft(gap1);
 
-    analyzerSpeedCombo.setBounds(settingsRow.removeFromLeft(90));
-    settingsRow.removeFromLeft(8);
+    analyzerRangeCombo.setBounds(settingsRow1.removeFromLeft(75));
+    settingsRow1.removeFromLeft(gap1);
 
-    eqScaleCombo.setBounds(settingsRow.removeFromLeft(85));
-    settingsRow.removeFromLeft(15);
+    analyzerSpeedCombo.setBounds(settingsRow1.removeFromLeft(85));
+    settingsRow1.removeFromLeft(gap1);
 
-    analyzerTiltButton.setBounds(settingsRow.removeFromLeft(45));
-    settingsRow.removeFromLeft(5);
-    analyzerTiltSlider.setBounds(settingsRow.removeFromLeft(130));
-    settingsRow.removeFromLeft(15);
+    eqScaleCombo.setBounds(settingsRow1.removeFromLeft(80));
+    settingsRow1.removeFromLeft(gap1 + 6);  // Trenner zwischen Combos und Buttons
 
-    analyzerFreezeButton.setBounds(settingsRow.removeFromLeft(60));
-    settingsRow.removeFromLeft(8);
+    // Tilt entfernt (v2.0) - Controls versteckt
+    analyzerTiltButton.setVisible(false);
+    analyzerTiltSlider.setVisible(false);
 
-    analyzerPeaksButton.setBounds(settingsRow.removeFromLeft(55));
-    settingsRow.removeFromLeft(8);
+    analyzerFreezeButton.setBounds(settingsRow1.removeFromLeft(65));
+    settingsRow1.removeFromLeft(gap1);
+
+    analyzerPeaksButton.setBounds(settingsRow1.removeFromLeft(62));
+    settingsRow1.removeFromLeft(gap1);
+
+    // Spektrum-Farbschema (rechts in Zeile 1)
+    spectrumColorCombo.setBounds(settingsRow1.removeFromRight(130));
+
+    // --- Zeile 2: Feature-Toggles & Display ---
+    auto settingsRow2 = analyzerSettingsArea.reduced(5, 1);
+    const int gap2 = 4;
+
+    showLabelsButton.setBounds(settingsRow2.removeFromLeft(72));
+    settingsRow2.removeFromLeft(gap2);
     
-    showLabelsButton.setBounds(settingsRow.removeFromLeft(70));
-    settingsRow.removeFromLeft(8);
+    pianoRollButton.setBounds(settingsRow2.removeFromLeft(68));
+    settingsRow2.removeFromLeft(gap2 + 6);  // Trenner: Display → Panels
     
-    // NEU: Piano Roll Button
-    pianoRollButton.setBounds(settingsRow.removeFromLeft(55));
-    settingsRow.removeFromLeft(8);
+    spectralDynButton.setBounds(settingsRow2.removeFromLeft(65));
+    settingsRow2.removeFromLeft(gap2);
     
-    // NEU: Spektrum-Farbschema
-    spectrumColorCombo.setBounds(settingsRow.removeFromLeft(140));
+    crossChannelButton.setBounds(settingsRow2.removeFromLeft(68));
+    settingsRow2.removeFromLeft(gap2);
+    
+    eqSketchButton.setBounds(settingsRow2.removeFromLeft(65));
+    settingsRow2.removeFromLeft(gap2);
+    
+    genreMorphButton.setBounds(settingsRow2.removeFromLeft(65));
+    settingsRow2.removeFromLeft(gap2);
+    
+    multiRefButton.setBounds(settingsRow2.removeFromLeft(78));
+    settingsRow2.removeFromLeft(gap2);
+    
+    tutorialButton.setBounds(settingsRow2.removeFromLeft(65));
 
-    // Band-Controls unten (optimierte Größe)
-    auto bandControlsArea = bounds.removeFromBottom(150);
+    // Band-Controls unten (kompaktes Hybrid-Layout: min 72, max 108, ~12% der Fensterhöhe)
+    const int bandControlsHeight = juce::jlimit(72, 108, getHeight() * 12 / 100);
+    auto bandControlsArea = bounds.removeFromBottom(bandControlsHeight);
 
     // ===== Trial-Banner ganz unten (unter BandControls) =====
     {
@@ -698,16 +1435,66 @@ void AuraAudioProcessorEditor::resized()
             mainArea.removeFromRight(5);
     }
     
+    // v2.0: Spectral Dynamics Panel (unter Band-Controls, links)
+    if (spectralDynamicsPanel != nullptr && showSpectralDynPanel)
+    {
+        auto dynArea = mainArea.removeFromBottom(180);
+        spectralDynamicsPanel->setBounds(dynArea);
+        mainArea.removeFromBottom(3);
+    }
+    
+    // v2.0: Cross-Channel Panel (rechts, wenn aktiv)
+    if (crossChannelPanel != nullptr && showCrossChannelPanel)
+    {
+        auto ccArea = mainArea.removeFromRight(260);
+        crossChannelPanel->setBounds(ccArea);
+        mainArea.removeFromRight(3);
+    }
+    
+    // v2.0: Multi-Reference Panel (rechts, wenn aktiv)
+    if (multiRefPanel != nullptr && showMultiRefPanel)
+    {
+        int mrWidth = multiRefPanel->getPreferredWidth();
+        auto mrArea = mainArea.removeFromRight(mrWidth);
+        multiRefPanel->setBounds(mrArea);
+        if (!multiRefPanel->isCollapsed())
+            mainArea.removeFromRight(3);
+    }
+    
+    // v2.0: Genre Morph Widget (unten, wenn aktiv)
+    if (genreMorphWidget != nullptr && showGenreMorphPanel)
+    {
+        int gmHeight = genreMorphWidget->getPreferredHeight();
+        auto gmArea = mainArea.removeFromBottom(gmHeight);
+        genreMorphWidget->setBounds(gmArea);
+        mainArea.removeFromBottom(3);
+    }
+    
+    // WebSearch Panel (rechts, wenn aktiv)
+    if (webSearchPanel != nullptr && showWebSearchPanel)
+    {
+        int wsWidth = juce::jlimit(260, 400, getWidth() / 4);
+        auto wsArea = mainArea.removeFromRight(wsWidth);
+        webSearchPanel->setBounds(wsArea);
+        mainArea.removeFromRight(3);
+    }
+    
     spectrumAnalyzer.setBounds(mainArea);
     eqCurve.setBounds(mainArea);
     spectrumGrabTool.setBounds(mainArea);
     smartHighlightOverlay.setBounds(mainArea);
     pianoRollOverlay.setBounds(mainArea);  // NEU: Piano Roll über Analyzer
+    
+    // v2.0: Tutorial Overlay (über alles)
+    if (tutorialOverlayPanel.isVisible())
+        tutorialOverlayPanel.setBounds(getLocalBounds());
 }
 
 void AuraAudioProcessorEditor::updateFromProcessor()
 {
     auto& apvts = audioProcessor.getAPVTS();
+
+    syncPhaseModeControlsFromState();
     
     // NEU: Trial-Banner regelmaessig aktualisieren (~alle 5 Sekunden bei 25 FPS)
     {
@@ -718,16 +1505,41 @@ void AuraAudioProcessorEditor::updateFromProcessor()
         }
     }
     
+    // Watchdog: Output-Renderer Auto-Restart (~alle 2 Sekunden prüfen)
+    {
+        if (++outputRoutingWatchdogCounter >= 50)  // 25 FPS * 2s
+        {
+            outputRoutingWatchdogCounter = 0;
+            auto& capture = audioProcessor.getSystemAudioCapture();
+            if (capture.isCapturing() && capture.needsOutputRoutingRestart())
+            {
+                if (capture.restartOutputRouting())
+                {
+                    DBG("Watchdog: Output-Renderer erfolgreich neu gestartet.");
+                }
+                else
+                {
+                    DBG("Watchdog: Output-Renderer Restart fehlgeschlagen.");
+                    // ComboBox auf "Stumm" zurücksetzen
+                    sysAudioOutputCombo.setSelectedId(1, juce::dontSendNotification);
+                }
+            }
+        }
+    }
+    
     // Live Smart EQ: Pending Parameter-Änderungen im Message-Thread anwenden (RT-safe)
+    // Nicht anwenden auf das Band das der User gerade manuell zieht
     auto& liveSmartEQ = audioProcessor.getLiveSmartEQ();
+    {
+        int draggedBand = (eqCurve.isDraggingBand()) ? eqCurve.getSelectedBand() : -1;
+        liveSmartEQ.setDraggedBand(draggedBand);
+    }
     liveSmartEQ.applyPendingParameterChanges(apvts);
     
-    // Linear Phase EQ: Magnitude-Response aktualisieren (vom GUI-Thread)
-    auto& linearPhaseEQ = audioProcessor.getLinearPhaseEQ();
-    if (linearPhaseEQ.isEnabled())
-    {
-        linearPhaseEQ.updateMagnitudeResponse(audioProcessor.getEQProcessor());
-    }
+    // v2.1 FIX: updateMagnitudeResponse() wird NUR noch vom Audio-Thread aufgerufen
+    // (via eqParamsDirty_ Flag in processLinearPhaseEQ/processMixedPhaseEQ).
+    // Der GUI-Thread-Aufruf hier verursachte eine Data Race auf workingResponse.
+    // Entfernt: linearPhaseEQ.updateMagnitudeResponse(audioProcessor.getEQProcessor());
     
     // Live Smart EQ Reset im Message-Thread ausführen (falls angefordert)
     if (liveSmartEQ.shouldReset())
@@ -747,22 +1559,24 @@ void AuraAudioProcessorEditor::updateFromProcessor()
         auto* freqParam = apvts.getRawParameterValue(ParameterIDs::getBandFreqID(i));
         auto* gainParam = apvts.getRawParameterValue(ParameterIDs::getBandGainID(i));
         auto* qParam = apvts.getRawParameterValue(ParameterIDs::getBandQID(i));
+        auto* slopeParam = apvts.getRawParameterValue(ParameterIDs::getBandSlopeID(i));
         auto* typeParam = apvts.getRawParameterValue(ParameterIDs::getBandTypeID(i));
         auto* bypassParam = apvts.getRawParameterValue(ParameterIDs::getBandBypassID(i));
         auto* activeParam = apvts.getRawParameterValue(ParameterIDs::getBandActiveID(i));
         
         if (freqParam == nullptr || gainParam == nullptr || qParam == nullptr ||
-            typeParam == nullptr || bypassParam == nullptr || activeParam == nullptr)
+            slopeParam == nullptr || typeParam == nullptr || bypassParam == nullptr || activeParam == nullptr)
             continue;
             
         float freq = freqParam->load();
         float gain = gainParam->load();
         float q = qParam->load();
+        int slope = static_cast<int>(slopeParam->load());
         int type = static_cast<int>(typeParam->load());
         bool bypass = bypassParam->load() > 0.5f;
         bool active = activeParam->load() > 0.5f;
 
-        eqCurve.setBandParameters(i, freq, gain, q,
+        eqCurve.setBandParameters(i, freq, gain, q, slope,
                                    static_cast<ParameterIDs::FilterType>(type),
                                    bypass, active);
     }
@@ -773,6 +1587,15 @@ void AuraAudioProcessorEditor::updateFromProcessor()
     {
         bool analyzerOn = analyzerOnParam->load() > 0.5f;
         spectrumAnalyzer.setEnabled(analyzerOn);
+    }
+    
+    // Obere Frequenzgrenze dynamisch an Samplerate anpassen
+    // (Samplerate kann sich zur Laufzeit ändern, z.B. bei DAW-Wechsel)
+    {
+        float nyquist = static_cast<float>(audioProcessor.getSampleRate()) * 0.5f;
+        float displayMax = std::min(20000.0f, nyquist * 0.95f);
+        if (std::abs(spectrumAnalyzer.getMaxFrequency() - displayMax) > 100.0f)
+            spectrumAnalyzer.setFrequencyRange(20.0f, displayMax);
     }
     
     // Grab-Tool: Spektrum-Daten vom PostAnalyzer fuettern
@@ -796,8 +1619,9 @@ void AuraAudioProcessorEditor::updateFromProcessor()
         bool suppressorOn = (suppressorParam != nullptr && suppressorParam->load() > 0.5f);
         
         // Nur anzeigen wenn Suppressor aktiv UND tatsächlich Audio anliegt
-        float audioLevel = std::max(outputLevelLeft, outputLevelRight);
-        bool hasAudio = (audioLevel > 0.0001f);  // ca. -80 dB
+        // outputLevelLeft/Right liefert dB-Werte (z.B. -20.0 dB), daher dB-Schwellwert verwenden
+        float audioLevelDBSuppressor = std::max(outputLevelLeft, outputLevelRight);
+        bool hasAudio = (audioLevelDBSuppressor > -80.0f);  // -80 dB Gate
         
         spectrumAnalyzer.setSootheCurveEnabled(suppressorOn && hasAudio);
         
@@ -818,6 +1642,79 @@ void AuraAudioProcessorEditor::updateFromProcessor()
     
     // Smart Analysis aktualisieren
     updateSmartAnalysis();
+    
+    // v2.0: Genre Morph — Morph berechnen und Band-Offsets anwenden
+    // Nur auf Bänder 0-3 anwenden (Bänder 4-11 sind für Live Smart EQ reserviert)
+    // Nicht anwenden während der User ein Band manuell zieht
+    // Nicht anwenden wenn Sketch-Mode aktive Bänder gesetzt hat
+    if (showGenreMorphPanel && !eqCurve.isDraggingBand() && !sketchActive_)
+    {
+        auto& morphSlider = audioProcessor.getGenreMorphSlider();
+        const auto& morphResult = morphSlider.calculateMorph();
+        
+        // Band-Frequenzen sammeln und Gain-Offsets berechnen
+        float bandFreqs[12] = {};
+        for (int i = 0; i < ParameterIDs::MAX_BANDS; ++i)
+        {
+            auto* freqParam = apvts.getRawParameterValue(ParameterIDs::getBandFreqID(i));
+            bandFreqs[i] = (freqParam != nullptr) ? freqParam->load() : 1000.0f;
+        }
+        morphSlider.calculateBandGainOffsets(bandFreqs, ParameterIDs::MAX_BANDS);
+        
+        // Nur Bänder 0-3 verwenden (4-11 für Live Smart EQ reserviert)
+        constexpr int kMorphLastBand = 4;
+        for (int i = 0; i < kMorphLastBand; ++i)
+        {
+            // Nicht das aktuell selektierte/gezogene Band überschreiben
+            if (i == eqCurve.getSelectedBand()) continue;
+            
+            float offset = morphResult.bandGainOffsets[i];
+            
+            auto* gainParam = apvts.getParameter(ParameterIDs::getBandGainID(i));
+            if (gainParam != nullptr)
+            {
+                float currentGain = gainParam->convertFrom0to1(gainParam->getValue());
+                float targetGain = offset;
+                
+                // Skip if already at target (within 0.01 dB)
+                if (std::abs(targetGain - currentGain) < 0.01f) continue;
+                
+                // Band aktivieren falls nötig
+                if (std::abs(targetGain) > 0.1f)
+                {
+                    auto* activeParam = apvts.getParameter(ParameterIDs::getBandActiveID(i));
+                    if (activeParam != nullptr && activeParam->getValue() < 0.5f)
+                        activeParam->setValueNotifyingHost(1.0f);
+                }
+                
+                // Exponentielles Smoothing zum Zielwert (konvergiert!)
+                float newGain = currentGain + (targetGain - currentGain) * 0.08f;
+                gainParam->setValueNotifyingHost(gainParam->convertTo0to1(
+                    juce::jlimit(-24.0f, 24.0f, newGain)));
+            }
+        }
+    }
+}
+
+void AuraAudioProcessorEditor::syncPhaseModeControlsFromState()
+{
+    auto& apvts = audioProcessor.getAPVTS();
+    auto* phaseModeParam = apvts.getRawParameterValue(ParameterIDs::PHASE_MODE);
+    auto* legacyLinearPhaseParam = apvts.getRawParameterValue(ParameterIDs::LINEAR_PHASE_MODE);
+
+    int effectivePhaseMode = (phaseModeParam != nullptr) ? static_cast<int>(phaseModeParam->load()) : 0;
+
+    if (effectivePhaseMode == 0 && legacyLinearPhaseParam != nullptr && legacyLinearPhaseParam->load() > 0.5f)
+        effectivePhaseMode = 1;
+
+    const int targetId = juce::jlimit(1, 3, effectivePhaseMode + 1);
+    if (phaseModeCombo.getSelectedId() != targetId)
+    {
+        juce::ScopedValueSetter<bool> syncGuard(phaseModeControlSyncInProgress_, true);
+        phaseModeCombo.setSelectedId(targetId, juce::dontSendNotification);
+    }
+
+    applyToolbarTabVisibility();
 }
 
 void AuraAudioProcessorEditor::updateBandControlsDisplay()
@@ -827,6 +1724,17 @@ void AuraAudioProcessorEditor::updateBandControlsDisplay()
     if (selectedBand >= 0)
     {
         auto& apvts = audioProcessor.getAPVTS();
+
+        auto* activeParam = apvts.getRawParameterValue(ParameterIDs::getBandActiveID(selectedBand));
+        if (activeParam == nullptr || activeParam->load() <= 0.5f)
+        {
+            if (eqCurve.getSelectedBand() == selectedBand)
+                eqCurve.setSelectedBand(-1);
+            else
+                bandControls.clearSelection();
+
+            return;
+        }
 
         // Sichere Parameter-Zugriffe
         auto* freqParam = apvts.getRawParameterValue(ParameterIDs::getBandFreqID(selectedBand));
@@ -869,6 +1777,10 @@ void AuraAudioProcessorEditor::updateBandControlsDisplay()
 // EQCurveComponent::Listener Implementierung
 void AuraAudioProcessorEditor::bandParameterChanged(int bandIndex, float frequency, float gain, float q)
 {
+    // v2.0 FIX: Manuelle Band-Änderung hebt Sketch-Schutz auf (Bänder 0-3)
+    if (bandIndex >= 0 && bandIndex < 4 && sketchActive_)
+        sketchActive_ = false;
+    
     auto& apvts = audioProcessor.getAPVTS();
 
     // Parameter über APVTS setzen
@@ -952,10 +1864,9 @@ void AuraAudioProcessorEditor::bandDeleted(int bandIndex)
 {
     auto& apvts = audioProcessor.getAPVTS();
 
-    // Alle Parameter des gelöschten Bandes auf Standard zurücksetzen
-    if (auto* activeParam = apvts.getParameter(ParameterIDs::getBandActiveID(bandIndex)))
-        activeParam->setValueNotifyingHost(0.0f);
-
+    // Alle Parameter des gelöschten Bandes auf Standard zurücksetzen.
+    // WICHTIG: Active-Flag zuletzt zurücknehmen, damit der Processor während
+    // der Zwischenstände kein "unsichtbares aber noch wirksames" Band behält.
     if (auto* freqParam = apvts.getParameter(ParameterIDs::getBandFreqID(bandIndex)))
         freqParam->setValueNotifyingHost(freqParam->convertTo0to1(1000.0f));
 
@@ -971,14 +1882,82 @@ void AuraAudioProcessorEditor::bandDeleted(int bandIndex)
     if (auto* bypassParam = apvts.getParameter(ParameterIDs::getBandBypassID(bandIndex)))
         bypassParam->setValueNotifyingHost(0.0f);
 
+    if (auto* channelParam = apvts.getParameter(ParameterIDs::getBandChannelID(bandIndex)))
+        channelParam->setValueNotifyingHost(channelParam->convertTo0to1(static_cast<float>(ParameterIDs::ChannelMode::Stereo)));
+
     if (auto* slopeParam = apvts.getParameter(ParameterIDs::getBandSlopeID(bandIndex)))
-        slopeParam->setValueNotifyingHost(slopeParam->convertTo0to1(12.0f));
+        slopeParam->setValueNotifyingHost(slopeParam->convertTo0to1(ParameterIDs::DEFAULT_SLOPE));
+
+    if (auto* dynEnabledParam = apvts.getParameter(ParameterIDs::getBandDynEnabledID(bandIndex)))
+        dynEnabledParam->setValueNotifyingHost(0.0f);
+
+    if (auto* dynThresholdParam = apvts.getParameter(ParameterIDs::getBandDynThresholdID(bandIndex)))
+        dynThresholdParam->setValueNotifyingHost(dynThresholdParam->convertTo0to1(-20.0f));
+
+    if (auto* dynRatioParam = apvts.getParameter(ParameterIDs::getBandDynRatioID(bandIndex)))
+        dynRatioParam->setValueNotifyingHost(dynRatioParam->convertTo0to1(2.0f));
+
+    if (auto* dynAttackParam = apvts.getParameter(ParameterIDs::getBandDynAttackID(bandIndex)))
+        dynAttackParam->setValueNotifyingHost(dynAttackParam->convertTo0to1(10.0f));
+
+    if (auto* dynReleaseParam = apvts.getParameter(ParameterIDs::getBandDynReleaseID(bandIndex)))
+        dynReleaseParam->setValueNotifyingHost(dynReleaseParam->convertTo0to1(100.0f));
+
+    if (auto* soloParam = apvts.getParameter(ParameterIDs::getBandSoloID(bandIndex)))
+        soloParam->setValueNotifyingHost(0.0f);
+
+    if (auto* activeParam = apvts.getParameter(ParameterIDs::getBandActiveID(bandIndex)))
+        activeParam->setValueNotifyingHost(0.0f);
+
+    // Zusätzliche harte Synchronisation: Wenn der GUI-Delete schneller ist als
+    // nachlaufende Parameter-/Attachment-Updates, darf im Processor keine
+    // unsichtbare Restkurve aktiv bleiben.
+    auto& band = audioProcessor.getEQProcessor().getBand(bandIndex);
+    band.setParameters(ParameterIDs::DEFAULT_FREQUENCY,
+                       ParameterIDs::DEFAULT_GAIN,
+                       ParameterIDs::DEFAULT_Q,
+                       ParameterIDs::FilterType::Bell,
+                       ParameterIDs::ChannelMode::Stereo,
+                       false);
+    band.setSlope(static_cast<int>(ParameterIDs::DEFAULT_SLOPE));
+    band.setDynamicMode(false);
+    band.setThreshold(-20.0f);
+    band.setRatio(2.0f);
+    band.setAttack(10.0f);
+    band.setRelease(100.0f);
+    band.setActive(false);
+
+    eqCurve.setBandParameters(bandIndex,
+                              ParameterIDs::DEFAULT_FREQUENCY,
+                              ParameterIDs::DEFAULT_GAIN,
+                              ParameterIDs::DEFAULT_Q,
+                              static_cast<int>(ParameterIDs::DEFAULT_SLOPE),
+                              ParameterIDs::FilterType::Bell,
+                              false,
+                              false);
+
+    bandPopup.setVisible(false);
+    bandPopup.clearAttachments();
 
     // Selection aufräumen wenn nötig
-    if (bandControls.getCurrentBandIndex() == bandIndex)
-        bandControls.clearSelection();
+    if (eqCurve.getSelectedBand() == bandIndex)
+        eqCurve.setSelectedBand(-1);
+
+    bandControls.clearAttachments();
+    bandControls.clearSelection();
 
     updateFromProcessor();
+    updateBandControlsDisplay();
+
+    auto safeThis = juce::Component::SafePointer<AuraAudioProcessorEditor>(this);
+    juce::Timer::callAfterDelay(30, [safeThis]()
+    {
+        if (safeThis != nullptr && safeThis->eqCurve.getSelectedBand() < 0)
+        {
+            safeThis->bandControls.clearAttachments();
+            safeThis->bandControls.clearSelection();
+        }
+    });
 }
 
 // BandControls::Listener Implementierung
@@ -997,6 +1976,8 @@ void AuraAudioProcessorEditor::bandControlChanged(int bandIndex, const juce::Str
         paramID = ParameterIDs::getBandTypeID(bandIndex);
     else if (parameterName == "channel")
         paramID = ParameterIDs::getBandChannelID(bandIndex);
+    else if (parameterName == "slope")
+        paramID = ParameterIDs::getBandSlopeID(bandIndex);
     else if (parameterName == "bypass")
         paramID = ParameterIDs::getBandBypassID(bandIndex);
 
@@ -1005,6 +1986,10 @@ void AuraAudioProcessorEditor::bandControlChanged(int bandIndex, const juce::Str
         if (auto* param = apvts.getParameter(paramID))
         {
             param->setValueNotifyingHost(param->convertTo0to1(value));
+
+            // Slope ist diskret und soll visuell sofort reagieren.
+            if (parameterName == "slope")
+                updateFromProcessor();
         }
     }
 }
@@ -1018,7 +2003,8 @@ void AuraAudioProcessorEditor::bandPopupValueChanged(int bandIndex, const juce::
 
 void AuraAudioProcessorEditor::bandPopupDeleteRequested(int bandIndex)
 {
-    bandDeleted(bandIndex);
+    eqCurve.deleteBand(bandIndex);
+    bandPopup.clearAttachments();
     bandPopup.setVisible(false);
 }
 
@@ -1033,6 +2019,90 @@ void AuraAudioProcessorEditor::bandRightClicked(int bandIndex)
 {
     // Rechtsklick auf Band -> Zeige Popup
     showBandPopup(bandIndex);
+}
+
+void AuraAudioProcessorEditor::bandAutoListenUpdate(int /*bandIndex*/, float freq, float q)
+{
+    audioProcessor.setAutoListen(true, freq, q);
+}
+
+void AuraAudioProcessorEditor::bandAutoListenStop()
+{
+    audioProcessor.setAutoListen(false);
+}
+
+void AuraAudioProcessorEditor::sketchCompleted(const std::vector<EQSketchTool::GeneratedBand>& bands)
+{
+    if (bands.empty()) return;
+    
+    auto& apvts = audioProcessor.getAPVTS();
+    
+    // v2.0 FIX: Sketch nur auf Bänder 0-3 anwenden (4-11 sind für Live Smart EQ reserviert)
+    constexpr int kSketchMaxBands = 4;
+    int numToApply = std::min(static_cast<int>(bands.size()), kSketchMaxBands);
+    
+    for (int i = 0; i < numToApply; ++i)
+    {
+        const auto& band = bands[static_cast<size_t>(i)];
+        
+        // Band aktivieren
+        if (auto* activeParam = apvts.getParameter(ParameterIDs::getBandActiveID(i)))
+            activeParam->setValueNotifyingHost(1.0f);
+        
+        // Frequenz setzen
+        if (auto* freqParam = apvts.getParameter(ParameterIDs::getBandFreqID(i)))
+            freqParam->setValueNotifyingHost(freqParam->convertTo0to1(band.frequency));
+        
+        // Gain setzen
+        if (auto* gainParam = apvts.getParameter(ParameterIDs::getBandGainID(i)))
+            gainParam->setValueNotifyingHost(gainParam->convertTo0to1(band.gainDB));
+        
+        // Q setzen
+        if (auto* qParam = apvts.getParameter(ParameterIDs::getBandQID(i)))
+            qParam->setValueNotifyingHost(qParam->convertTo0to1(band.q));
+        
+        // Filter-Typ setzen (Sketch GeneratedBand::Type -> ParameterIDs::FilterType)
+        if (auto* typeParam = apvts.getParameter(ParameterIDs::getBandTypeID(i)))
+        {
+            int typeValue = 0;  // Peak/Bell default
+            switch (band.type)
+            {
+                case EQSketchTool::GeneratedBand::Peak:      typeValue = static_cast<int>(ParameterIDs::FilterType::Bell); break;
+                case EQSketchTool::GeneratedBand::LowShelf:   typeValue = static_cast<int>(ParameterIDs::FilterType::LowShelf); break;
+                case EQSketchTool::GeneratedBand::HighShelf:  typeValue = static_cast<int>(ParameterIDs::FilterType::HighShelf); break;
+                case EQSketchTool::GeneratedBand::LowCut:     typeValue = static_cast<int>(ParameterIDs::FilterType::LowCut); break;
+                case EQSketchTool::GeneratedBand::HighCut:    typeValue = static_cast<int>(ParameterIDs::FilterType::HighCut); break;
+                default: typeValue = static_cast<int>(ParameterIDs::FilterType::Bell); break;
+            }
+            typeParam->setValueNotifyingHost(typeParam->convertTo0to1(static_cast<float>(typeValue)));
+        }
+    }
+    
+    // Sketch Mode automatisch beenden
+    eqSketchButton.setToggleState(false, juce::sendNotification);
+    
+    // v2.0 FIX: Sketch-Schutz aktivieren — verhindert dass Genre Morph sofort überschreibt
+    sketchActive_ = true;
+    
+    // EQ-Kurve aktualisieren
+    for (int i = 0; i < numToApply; ++i)
+    {
+        auto* freqParam = apvts.getRawParameterValue(ParameterIDs::getBandFreqID(i));
+        auto* gainParam = apvts.getRawParameterValue(ParameterIDs::getBandGainID(i));
+        auto* qParam = apvts.getRawParameterValue(ParameterIDs::getBandQID(i));
+        if (freqParam && gainParam && qParam)
+        {
+            auto* slopeParam = apvts.getRawParameterValue(ParameterIDs::getBandSlopeID(i));
+            const int slope = (slopeParam != nullptr)
+                ? static_cast<int>(slopeParam->load())
+                : static_cast<int>(ParameterIDs::DEFAULT_SLOPE);
+
+            eqCurve.setBandParameters(i, *freqParam, *gainParam, *qParam, slope,
+                ParameterIDs::FilterType::Bell, false, true);
+        }
+    }
+    
+    repaint();
 }
 
 void AuraAudioProcessorEditor::applyPreset(const PresetManager::PresetData& preset)
@@ -1133,7 +2203,7 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
 {
     // Resolution ComboBox
     analyzerResolutionCombo.addItemList(ParameterIDs::getAnalyzerResolutionNames(), 1);
-    analyzerResolutionCombo.setTooltip("FFT Aufloesung\nHoehere Werte = genauere Darstellung tiefer Frequenzen,\naber langsamere Reaktionszeit.\nNiedrigere Werte = schnellere Reaktion, weniger Detail.");
+    analyzerResolutionCombo.setTooltip("FFT Resolution\nHigher values = more accurate representation of low frequencies,\nbut slower reaction time.\nLower values = faster response, less detail.");
     addAndMakeVisible(analyzerResolutionCombo);
 
     analyzerResolutionCombo.onChange = [this]()
@@ -1157,7 +2227,7 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
 
     // Range ComboBox
     analyzerRangeCombo.addItemList(ParameterIDs::getAnalyzerRangeNames(), 1);
-    analyzerRangeCombo.setTooltip("Anzeigebereich (dB)\nBestimmt den sichtbaren Dynamikumfang des Analyzers.\nGroessere Bereiche zeigen mehr Detail bei leisen Signalen.");
+    analyzerRangeCombo.setTooltip("Display Range (dB)\nDetermines the visible dynamic range of the analyzer.\nLarger ranges show more detail in quiet signals.");
     addAndMakeVisible(analyzerRangeCombo);
 
     analyzerRangeCombo.onChange = [this]()
@@ -1179,7 +2249,7 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
 
     // Speed ComboBox
     analyzerSpeedCombo.addItemList(ParameterIDs::getAnalyzerSpeedNames(), 1);
-    analyzerSpeedCombo.setTooltip("Analyzer-Geschwindigkeit\nLangsam = Glattere Darstellung, gut fuer Uebersicht\nSchnell = Reaktionsfreudigere Anzeige, gut fuer Details");
+    analyzerSpeedCombo.setTooltip("Analyzer Speed\nSlow = Smoother display, good for overview\nFast = More responsive, good for detail");
     addAndMakeVisible(analyzerSpeedCombo);
 
     analyzerSpeedCombo.onChange = [this]()
@@ -1207,7 +2277,7 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
     eqScaleCombo.addItem(juce::CharPointer_UTF8("+/-12 dB"), 2);
     eqScaleCombo.addItem(juce::CharPointer_UTF8("+/-24 dB"), 3);
     eqScaleCombo.addItem(juce::CharPointer_UTF8("+/-36 dB"), 4);
-    eqScaleCombo.setTooltip("EQ Gain-Skalierung\nBestimmt den maximalen Gain-Bereich der EQ-Kurve.\nKleinere Bereiche (z.B. +/-12 dB) zeigen feinere Details,\ngroessere Bereiche (z.B. +/-30 dB) erlauben staerkere Eingriffe.");
+    eqScaleCombo.setTooltip("EQ Gain Scale\nDetermines the maximum gain range of the EQ curve.\nSmaller ranges (e.g. +/-12 dB) show finer detail,\nlarger ranges (e.g. +/-36 dB) allow stronger adjustments.");
     addAndMakeVisible(eqScaleCombo);
 
     eqScaleCombo.onChange = [this]()
@@ -1230,43 +2300,13 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
     // Standard: ±36 dB
     eqScaleCombo.setSelectedId(4, juce::dontSendNotification);
 
-    // Tilt Slider
-    analyzerTiltSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    analyzerTiltSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
-    analyzerTiltSlider.setRange(ParameterIDs::MIN_ANALYZER_TILT, ParameterIDs::MAX_ANALYZER_TILT, 0.5f);
-    analyzerTiltSlider.setValue(ParameterIDs::DEFAULT_ANALYZER_TILT);
-    analyzerTiltSlider.setTextValueSuffix(" dB/oct");
-    analyzerTiltSlider.setTooltip("Spektrum-Tilt Kompensation (dB/Oktave)\nGleicht die natuerliche Neigung des Frequenzspektrums aus.\nMusik hat typisch mehr Energie in den Tiefen - mit Tilt\nwird die Anzeige visuell ausgeglichener.");
-    addAndMakeVisible(analyzerTiltSlider);
-
-    analyzerTiltSlider.onValueChange = [this]()
-    {
-        float tilt = static_cast<float>(analyzerTiltSlider.getValue());
-        audioProcessor.getPreAnalyzer().setTiltSlope(tilt);
-        audioProcessor.getPostAnalyzer().setTiltSlope(tilt);
-    };
-
-    // Tilt Enable Button (Standard: OFF)
-    analyzerTiltButton.setButtonText("Tilt");
-    analyzerTiltButton.setToggleState(false, juce::dontSendNotification);
-    analyzerTiltButton.setTooltip("Tilt-Kompensation aktivieren\nWendet die eingestellte Spektrum-Neigung auf die Analyzer-Anzeige an.");
-    addAndMakeVisible(analyzerTiltButton);
-
-    analyzerTiltButton.onClick = [this]()
-    {
-        bool enabled = analyzerTiltButton.getToggleState();
-        audioProcessor.getPreAnalyzer().setTiltEnabled(enabled);
-        audioProcessor.getPostAnalyzer().setTiltEnabled(enabled);
-        analyzerTiltSlider.setEnabled(enabled);
-    };
-    
-    // Tilt-Slider standardmäßig deaktiviert
-    analyzerTiltSlider.setEnabled(false);
+    // Tilt-Funktion (v2.0: ausgeblendet, Code bleibt für spätere Reaktivierung)
+    // Slider und Button werden im resized() unsichtbar gesetzt
 
     // Freeze Button
     analyzerFreezeButton.setButtonText("Freeze");
     analyzerFreezeButton.setClickingTogglesState(true);
-    analyzerFreezeButton.setTooltip("Spektrum einfrieren\nHaelt die aktuelle Analyzer-Anzeige an.\nNuetzlich um ein bestimmtes Frequenzbild in Ruhe zu analysieren.");
+    analyzerFreezeButton.setTooltip("Freeze Spectrum\nHolds the current analyzer display.\nUseful for analyzing a specific frequency snapshot in detail.");
     addAndMakeVisible(analyzerFreezeButton);
 
     analyzerFreezeButton.onClick = [this]()
@@ -1279,7 +2319,7 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
     // Peaks Button
     analyzerPeaksButton.setButtonText("Peaks");
     analyzerPeaksButton.setToggleState(true, juce::dontSendNotification);
-    analyzerPeaksButton.setTooltip("Spitzen-Markierungen anzeigen\nZeigt die lautesten Frequenzspitzen mit Hz-Wert im Analyzer an.\nHilft beim schnellen Identifizieren dominanter Frequenzen.");
+    analyzerPeaksButton.setTooltip("Show Peak Markers\nDisplays the loudest frequency peaks with Hz values.\nHelps quickly identify dominant frequencies.");
     addAndMakeVisible(analyzerPeaksButton);
 
     analyzerPeaksButton.onClick = [this]()
@@ -1289,14 +2329,29 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
     
     // Labels Button (für Smart EQ Highlight-Labels)
     showLabelsButton.setButtonText("Labels");
-    showLabelsButton.setToggleState(true, juce::dontSendNotification);
-    showLabelsButton.setTooltip("Frequenzbereich-Labels anzeigen\nBlendet beschreibende Labels fuer typische Problembereiche ein:\nRumble, Mud, Boxiness, Presence, Air usw.\nHilft bei der Orientierung im Frequenzspektrum.");
+    showLabelsButton.setToggleState(false, juce::dontSendNotification);
+    showLabelsButton.setTooltip("Show Frequency Region Labels\nDisplays descriptive labels for typical problem areas:\nRumble, Mud, Boxiness, Presence, Air etc.\nHelps with orientation in the frequency spectrum.");
     addAndMakeVisible(showLabelsButton);
     
     showLabelsButton.onClick = [this]()
     {
-        smartHighlightOverlay.setShowLabels(showLabelsButton.getToggleState());
+        bool showLabels = showLabelsButton.getToggleState();
+        bool showOverlay = showLabels && smartModeButton.getToggleState();
+        smartHighlightOverlay.setShowLabels(showLabels);
+        smartHighlightOverlay.setEnabled(showOverlay);
+        smartHighlightOverlay.setVisible(showOverlay);
+        spectrumAnalyzer.setShowPeakLabels(showLabels);
+        repaint();
     };
+
+    {
+        bool initLabels = showLabelsButton.getToggleState();
+        bool initOverlay = initLabels && smartModeButton.getToggleState();
+        smartHighlightOverlay.setShowLabels(initLabels);
+        smartHighlightOverlay.setEnabled(initOverlay);
+        smartHighlightOverlay.setVisible(initOverlay);
+        spectrumAnalyzer.setShowPeakLabels(initLabels);
+    }
     
     // Spektrum-Farbschema ComboBox
     for (int i = 0; i < static_cast<int>(CustomLookAndFeel::NumSchemes); ++i)
@@ -1305,7 +2360,7 @@ void AuraAudioProcessorEditor::setupAnalyzerControls()
             CustomLookAndFeel::getSpectrumColorSchemeName(
                 static_cast<CustomLookAndFeel::SpectrumColorScheme>(i)), i + 1);
     }
-    spectrumColorCombo.setTooltip("Spektrum-Farbschema\nWaehle verschiedene Farbkombinationen\nfuer Input- und Output-Spektrum.");
+    spectrumColorCombo.setTooltip("Spectrum Color Scheme\nChoose different color combinations\nfor input and output spectrum.");
     addAndMakeVisible(spectrumColorCombo);
     
     spectrumColorCombo.onChange = [this]()
@@ -1376,8 +2431,9 @@ bool AuraAudioProcessorEditor::loadWindowSize(int& width, int& height)
         if (savedWidth > 0 && savedHeight > 0)
         {
             // Überprüfe ob Größe innerhalb sinnvoller Grenzen liegt
-            if (savedWidth >= 800 && savedWidth <= 1920 && 
-                savedHeight >= 550 && savedHeight <= 1200)
+            // v2.1 FIX: Grenzen konsistent mit setResizeLimits(1000, 550, 1800, 1000)
+            if (savedWidth >= 800 && savedWidth <= 1800 && 
+                savedHeight >= 550 && savedHeight <= 1000)
             {
                 width = savedWidth;
                 height = savedHeight;
@@ -1405,8 +2461,8 @@ void AuraAudioProcessorEditor::saveWindowSize(int width, int height)
         
         juce::PropertiesFile settings(options);
         
-        // Speichere nur wenn Größe im gültigen Bereich ist
-        if (width >= 800 && width <= 1600 && height >= 550 && height <= 1000)
+        // v2.1 FIX: Grenzen konsistent mit setResizeLimits(1000, 550, 1800, 1000)
+        if (width >= 800 && width <= 1800 && height >= 550 && height <= 1000)
         {
             settings.setValue("window_width", width);
             settings.setValue("window_height", height);
@@ -1428,7 +2484,7 @@ void AuraAudioProcessorEditor::setupSmartEQ()
     // Smart Mode Button
     smartModeButton.setButtonText("Smart EQ");
     smartModeButton.setClickingTogglesState(true);
-    smartModeButton.setTooltip("Smart EQ Modus\nAktiviert die KI-basierte Spektrum-Analyse.\nErkennt automatisch Problembereiche wie Resonanzen,\nMaskierungen und Ungleichgewichte.\nGeneriert EQ-Empfehlungen die per Klick angewendet werden koennen.");
+    smartModeButton.setTooltip("Smart EQ Mode\nEnables AI-based spectrum analysis.\nAutomatically detects problem areas like resonances,\nmaskings and imbalances.\nGenerates EQ recommendations that can be applied per click.");
     addAndMakeVisible(smartModeButton);
     
     // Button mit Parameter verbinden (für State-Speicherung im VST3)
@@ -1442,7 +2498,9 @@ void AuraAudioProcessorEditor::setupSmartEQ()
     {
         bool isActive = smartModeButton.getToggleState();
         // SmartAnalyzer wird jetzt im Processor über Parameter gesteuert
-        smartHighlightOverlay.setEnabled(isActive);
+        bool showOverlay = isActive && showLabelsButton.getToggleState();
+        smartHighlightOverlay.setEnabled(showOverlay);
+        smartHighlightOverlay.setVisible(showOverlay);
         smartRecommendationPanel.setAnalysisEnabled(isActive);
         smartRecommendationPanel.setVisible(isActive);  // Panel ein-/ausblenden
         
@@ -1471,8 +2529,9 @@ void AuraAudioProcessorEditor::setupSmartEQ()
     // Smart Highlight Overlay (über dem Spectrum Analyzer)
     addAndMakeVisible(smartHighlightOverlay);
     smartHighlightOverlay.setFrequencyRange(20.0f, 20000.0f);
-    smartHighlightOverlay.setOpacity(0.25f);
+    smartHighlightOverlay.setOpacity(0.18f);
     smartHighlightOverlay.setDisplayMode(SmartHighlightOverlay::DisplayMode::Regions);
+    smartHighlightOverlay.setVisible(false);
     
     // Callback wenn auf Problem geklickt wird
     smartHighlightOverlay.onProblemClicked = [this](const SmartAnalyzer::FrequencyProblem& problem)
@@ -1492,12 +2551,17 @@ void AuraAudioProcessorEditor::setupSmartEQ()
     // Smart Recommendation Panel (rechts neben Analyzer)
     addAndMakeVisible(smartRecommendationPanel);
     
+    // v2.0: AI Explanation Engine verbinden
+    smartRecommendationPanel.setAIExplanationEngine(&audioProcessor.getAIExplanationEngine());
+    
     // Callbacks für das Panel
     smartRecommendationPanel.onEnableChanged = [this](bool enabled)
     {
         // Button-Zustand setzen (Attachment synchronisiert automatisch mit Parameter)
         smartModeButton.setToggleState(enabled, juce::sendNotification);
-        smartHighlightOverlay.setEnabled(enabled);
+        bool showOverlay = enabled && showLabelsButton.getToggleState();
+        smartHighlightOverlay.setEnabled(showOverlay);
+        smartHighlightOverlay.setVisible(showOverlay);
     };
     
     smartRecommendationPanel.onApplyRecommendation = [this](int index)
@@ -1521,10 +2585,11 @@ void AuraAudioProcessorEditor::setupSmartEQ()
         resized();
     };
     
-    // Initial-Zustand basierend auf Parameter
-    bool smartModeInitiallyEnabled = false;  // Smart EQ standardmäßig aus
-    smartModeButton.setToggleState(smartModeInitiallyEnabled, juce::dontSendNotification);
+    // Initial-Zustand basierend auf Parameter (NICHT hardcoded false!)
+    // ButtonAttachment hat bereits den Button-State vom Parameter synchronisiert.
+    bool smartModeInitiallyEnabled = smartModeButton.getToggleState();
     smartHighlightOverlay.setEnabled(smartModeInitiallyEnabled);
+    smartHighlightOverlay.setVisible(smartModeInitiallyEnabled);
     smartRecommendationPanel.setVisible(smartModeInitiallyEnabled);
     smartRecommendationPanel.setCollapsed(true);  // Standardmäßig eingeklappt
     
@@ -1542,6 +2607,10 @@ void AuraAudioProcessorEditor::setupSmartEQ()
     addAndMakeVisible(*liveSmartEQPanel);
     liveSmartEQPanel->setVisible(smartModeInitiallyEnabled);  // Basierend auf Parameter
     liveSmartEQPanel->setCollapsed(true);  // Standardmäßig eingeklappt
+    
+    // v2.0: Detektoren verbinden für Status-Anzeige
+    liveSmartEQPanel->setTransientDetector(&audioProcessor.getTransientDetector());
+    liveSmartEQPanel->setTemporalPatternDetector(&audioProcessor.getTemporalPatternDetector());
     
     // Collapse-Callback für LiveSmartEQPanel
     liveSmartEQPanel->onCollapsedChanged = [this](bool /*collapsed*/)
@@ -1679,7 +2748,7 @@ void AuraAudioProcessorEditor::setupSmartEQ()
     // Reference-Button für Header
     referenceButton.setButtonText("Ref");
     referenceButton.setClickingTogglesState(true);
-    referenceButton.setTooltip("Reference Track\nLade einen Referenz-Song um das Frequenzspektrum\ndeines Tracks mit einer professionellen Referenz zu vergleichen.\nDer Spectral Matcher kann die Unterschiede automatisch angleichen.");
+    referenceButton.setTooltip("Reference Track\nLoad a reference song to compare the frequency spectrum\nof your track with a professional reference.\nThe Spectral Matcher can automatically align the differences.");
     referenceButton.onClick = [this]()
     {
         showReferencePanel = referenceButton.getToggleState();
@@ -1687,6 +2756,24 @@ void AuraAudioProcessorEditor::setupSmartEQ()
         resized();
     };
     addAndMakeVisible(referenceButton);
+    
+    // WebSearch Panel
+    webSearchPanel = std::make_unique<WebSearchPanel>(
+        audioProcessor.getWebSearchEngine()
+    );
+    addAndMakeVisible(*webSearchPanel);
+    webSearchPanel->setVisible(false);
+    
+    webSearchButton.setButtonText("Web");
+    webSearchButton.setClickingTogglesState(true);
+    webSearchButton.setTooltip("Web Search\nSearch the web for mixing tips, frequency information,\nand audio production knowledge.");
+    webSearchButton.onClick = [this]()
+    {
+        showWebSearchPanel = webSearchButton.getToggleState();
+        webSearchPanel->setVisible(showWebSearchPanel);
+        resized();
+    };
+    addAndMakeVisible(webSearchButton);
 }
 
 void AuraAudioProcessorEditor::updateSmartAnalysis()
@@ -1699,12 +2786,47 @@ void AuraAudioProcessorEditor::updateSmartAnalysis()
     // HINWEIS: analyze() wird bereits im Audio-Thread (processBlock) aufgerufen.
     // Hier nur die Ergebnisse lesen - kein doppelter Aufruf!
     
+    // Audio-Level Check: Keine Empfehlungen ohne Signal
+    // getOutputLevelLeft/Right liefert dB-Werte (z.B. -20.0 dB)
+    float audioLevelDB = std::max(audioProcessor.getOutputLevelLeft(), audioProcessor.getOutputLevelRight());
+    if (audioLevelDB < -80.0f)
+    {
+        // Kein Audio — Probleme und Empfehlungen leeren
+        smartHighlightOverlay.updateProblems({});
+        smartRecommendationPanel.updateRecommendations({});
+        return;
+    }
+    
+    // B.4: SmartAnalyzer-Referenz sicherstellen (für Confidence Heat-Map Rendering)
+    smartHighlightOverlay.setSmartAnalyzer(&smartAnalyzer);
+
     // Overlay aktualisieren
     smartHighlightOverlay.updateProblems(smartAnalyzer.getDetectedProblems());
-    
+
+    // D.2: Band-Konflikt-Warnung im EQ-Kurven-Bereich aktualisieren
+    eqCurve.setBandConflictCount(audioProcessor.getBandConflictCount());
+
     // Empfehlungen generieren
     smartEQRecommendation.updateRecommendations(smartAnalyzer, audioProcessor.getEQProcessor());
     smartRecommendationPanel.updateRecommendations(smartEQRecommendation.getRecommendations());
+
+    // B.1: Delta-Correction-Curve: LiveSmartEQ → SpectrumAnalyzer (grüne Kurve)
+    auto& liveEQ = audioProcessor.getLiveSmartEQ();
+    if (liveEQ.isEnabled())
+    {
+        if (liveEQ.isCorrectionCurveDirty())
+        {
+            const auto& curve = liveEQ.getCorrectionCurve();
+            std::vector<float> curveVec(curve.begin(), curve.end());
+            spectrumAnalyzer.setMatchCurve(curveVec);
+            spectrumAnalyzer.setMatchCurveEnabled(true);
+            liveEQ.clearCorrectionCurveDirty();
+        }
+    }
+    else
+    {
+        spectrumAnalyzer.setMatchCurveEnabled(false);
+    }
 }
 
 void AuraAudioProcessorEditor::applySmartRecommendation(int index)
@@ -1739,7 +2861,7 @@ void AuraAudioProcessorEditor::applyAllSmartRecommendations()
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::InfoIcon,
             "Smart EQ",
-            juce::String(appliedCount) + " Empfehlung(en) angewendet.",
+            juce::String(appliedCount) + " recommendation(s) applied.",
             "OK");
     }
 }
@@ -1751,7 +2873,8 @@ void AuraAudioProcessorEditor::applyAllSmartRecommendations()
 void AuraAudioProcessorEditor::updateTrialBanner()
 {
     auto& lm = LicenseManager::getInstance();
-    auto status = lm.getLicenseStatus();
+    lm.refreshCachedStatus();
+    auto status = lm.getCachedLicenseStatus();
     
     switch (status)
     {

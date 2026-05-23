@@ -12,12 +12,21 @@
 #include "GUI/SpectrumGrabTool.h"
 #include "GUI/LevelMeter.h"
 #include "GUI/ThemeSelector.h"
+#include "GUI/AuraSettingsPanel.h"
 #include "GUI/SmartHighlightOverlay.h"
 #include "GUI/SmartRecommendationPanel.h"
 #include "GUI/LiveSmartEQPanel.h"
 #include "GUI/ReferenceTrackPanel.h"
 #include "GUI/AudioSourceSelector.h"
 #include "GUI/PianoRollOverlay.h"
+#include "GUI/SpectralDynamicsPanel.h"
+#include "GUI/CrossChannelPanel.h"
+#include "GUI/EQSketchTool.h"
+#include "GUI/MultiReferencePanel.h"
+#include "GUI/GenreMorphWidget.h"
+#include "GUI/CustomProfilePanel.h"
+#include "GUI/TutorialOverlay.h"
+#include "GUI/WebSearchPanel.h"
 #include "DSP/SmartEQRecommendation.h"
 #include "Licensing/LicenseManager.h"
 #include "Licensing/LicenseDialog.h"
@@ -35,6 +44,13 @@ class AuraAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    public UpdateChecker::Listener
 {
 public:
+    enum class ToolbarTab
+    {
+        Processing = 0,
+        Smart,
+        Analyzer
+    };
+
     explicit AuraAudioProcessorEditor(AuraAudioProcessor&);
     ~AuraAudioProcessorEditor() override;
 
@@ -50,6 +66,9 @@ public:
     void filterTypeChanged(int bandIndex, ParameterIDs::FilterType type) override;
     void bandDeleted(int bandIndex) override;
     void bandRightClicked(int bandIndex) override;  // Rechtsklick -> Popup zeigen
+    void bandAutoListenUpdate(int bandIndex, float freq, float q) override;
+    void bandAutoListenStop() override;
+    void sketchCompleted(const std::vector<EQSketchTool::GeneratedBand>& bands) override;
 
     // BandControls::Listener
     void bandControlChanged(int bandIndex, const juce::String& parameterName, float value) override;
@@ -76,7 +95,10 @@ private:
     LevelMeter levelMeter;  // Neue Pegel-Anzeige
     ThemeSelector themeSelector;  // Theme-Auswahl
     juce::TextButton licenseButton;  // Lizenz-Button
+    juce::TextButton settingsButton;   // Einstellungen-Button
     juce::ToggleButton systemAudioButton;  // NEU: System Audio Capture Button
+    juce::ComboBox sysAudioOutputCombo;    // NEU: Output-Device Routing für Sys Audio
+    juce::Label sysAudioOutputLabel;       // Label für Output-Routing
     
     // Smart EQ Komponenten
     SmartHighlightOverlay smartHighlightOverlay;
@@ -97,13 +119,32 @@ private:
     juce::Label outputGainLabel;
     juce::Slider inputGainSlider;
     juce::Label inputGainLabel;
+    juce::ComboBox phaseModeCombo;
+    juce::ComboBox eqQualityCombo;
+    juce::ComboBox characterModeCombo;
+    juce::Slider phaseCrossoverSlider;
     juce::ToggleButton linearPhaseButton;
     juce::Label linearPhaseLabel;
     juce::ToggleButton midSideButton;
     juce::ToggleButton analyzerButton;
+    juce::ToggleButton phaseButton;  // Phase-Anzeige Toggle
     juce::ComboBox analyzerModeCombo;
     juce::ToggleButton grabModeButton;
     juce::TextButton resetButton;  // Reset-Button für alle Bänder
+
+    // Toolbar Tabs
+    juce::TextButton processingTabButton;
+    juce::TextButton smartTabButton;
+    juce::TextButton analyzerTabButton;
+    ToolbarTab currentToolbarTab_ = ToolbarTab::Processing;
+    
+    // Accordion Expand/Collapse State
+    bool processingAdvancedExpanded_ = false;
+    bool smartAdvancedExpanded_ = false;
+    bool analyzerAdvancedExpanded_ = false;
+    juce::TextButton processingExpandButton;
+    juce::TextButton smartExpandButton;
+    juce::TextButton analyzerExpandButton;
     
     // NEU: Undo/Redo Buttons
     juce::TextButton undoButton;
@@ -125,6 +166,33 @@ private:
     // NEU: Piano Roll Overlay
     PianoRollOverlay pianoRollOverlay;
     juce::ToggleButton pianoRollButton;
+    
+    // ===== v2.0: Neue GUI Panels =====
+    std::unique_ptr<SpectralDynamicsPanel> spectralDynamicsPanel;
+    std::unique_ptr<CrossChannelPanel> crossChannelPanel;
+    juce::ToggleButton spectralDynButton;   // Toggle für SpectralDynamics Panel
+    juce::ToggleButton crossChannelButton;  // Toggle für CrossChannel Panel
+    juce::ToggleButton eqSketchButton;      // Toggle für EQ Sketch Mode
+    juce::ToggleButton genreMorphButton;    // Toggle für Genre Morph Widget
+    juce::ToggleButton multiRefButton;      // Toggle für Multi-Reference Panel
+    juce::ToggleButton tutorialButton;      // Toggle für Tutorial/Lernmodus
+    std::unique_ptr<MultiReferencePanel> multiRefPanel;
+    std::unique_ptr<GenreMorphWidget> genreMorphWidget;
+    std::unique_ptr<CustomProfilePanel> customProfilePanel;
+    TutorialOverlay tutorialOverlayPanel;
+    bool showSpectralDynPanel = false;
+    bool showCrossChannelPanel = false;
+    bool showGenreMorphPanel = false;
+    bool showMultiRefPanel = false;
+    bool showTutorialOverlay = false;
+    
+    // WebSearch Panel
+    std::unique_ptr<WebSearchPanel> webSearchPanel;
+    juce::ToggleButton webSearchButton;
+    bool showWebSearchPanel = false;
+    
+    // v2.0 FIX: Sketch-Schutz — verhindert sofortiges Überschreiben durch Genre Morph
+    bool sketchActive_ = false;
 
     // NEU: Lizenz-Dialog Fenster
     std::unique_ptr<LicenseDialogWindow> licenseDialogWindow;
@@ -142,6 +210,7 @@ private:
     // NEU: Trial-Banner am unteren Rand
     juce::Label trialBannerLabel;
     int bannerUpdateCounter = 0;  // Member statt static (thread-safe bei mehreren Instanzen)
+    int outputRoutingWatchdogCounter = 0;  // Watchdog für Output-Renderer Auto-Restart
 public:
     void updateTrialBanner();
     void showLicenseDialog();
@@ -166,6 +235,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> linearPhaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> eqQualityAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> characterModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> phaseCrossoverAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> analyzerOnAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analyzerModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> smartModeAttachment;
@@ -194,7 +266,12 @@ private:
     void updateFromProcessor();
     void setupOutputControls();
     void updateBandControlsDisplay();
+    void syncPhaseModeControlsFromState();
     void applyPreset(const PresetManager::PresetData& preset);
+    void applyToolbarTabVisibility();
+    
+    // NEU: Sys Audio Output-Routing
+    void refreshSysAudioOutputDevices();
     
     // Smart EQ Methoden
     void setupSmartEQ();
@@ -228,6 +305,7 @@ private:
     
     // GPU-beschleunigtes Rendering (reduziert CPU-Last des Spektrum-Renderings erheblich)
     juce::OpenGLContext openGLContext;
+    bool phaseModeControlSyncInProgress_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AuraAudioProcessorEditor)
 };
